@@ -5,6 +5,7 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import customerRoutes from "./routes/customerRoutes.js";
 import zaloZnsRoutes from "./routes/zaloZnsRoutes.js"; // Import router mới
+import authRoutes from "./routes/authRoutes.js";
 import { scheduleZaloZNS } from "./services/zaloZnsService.js";
 
 dotenv.config();
@@ -19,6 +20,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Routes
 app.use("/api/customers", customerRoutes);
 app.use("/api/zns", zaloZnsRoutes); // Sử dụng router mới tạo
+app.use("/api/auth", authRoutes);
 
 // Base route for health check
 app.get("/", (req, res) => {
