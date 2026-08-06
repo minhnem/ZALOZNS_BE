@@ -12,7 +12,13 @@ const customerSchema = new mongoose.Schema({
   edd: { type: Date }, 
   is_estimated_dob: { type: Boolean, default: false },
   status: { type: String, enum: ['active', 'inactive'], default: 'active' },
-  source: { type: String, default: 'MANUAL_ENTRY' }
+  source: { type: String, default: 'MANUAL_ENTRY' },
+  customer_type: { type: String, enum: ['LEAD', 'BUYER'], default: 'LEAD' },
+
+  // Trường mới — Refill & ZNS
+  next_refill_date: { type: Date },
+  last_purchased_product: { type: String },
+  zns_enabled: { type: Boolean, default: true }
 }, { timestamps: true });
 
 export default mongoose.model('Customer', customerSchema);

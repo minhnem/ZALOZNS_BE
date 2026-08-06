@@ -4,8 +4,12 @@ import mongoose from "mongoose";
 import bodyParser from "body-parser";
 import cors from "cors";
 import customerRoutes from "./routes/customerRoutes.js";
-import zaloZnsRoutes from "./routes/zaloZnsRoutes.js"; // Import router mới
+import zaloZnsRoutes from "./routes/zaloZnsRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import productRoutes from "./routes/productRoutes.js";
+import orderRoutes from "./routes/orderRoutes.js";
+import campaignRoutes from "./routes/campaignRoutes.js";
+import znsTemplateRoutes from "./routes/znsTemplateRoutes.js";
 import { scheduleZaloZNS } from "./services/zaloZnsService.js";
 
 dotenv.config();
@@ -19,8 +23,12 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // Routes
 app.use("/api/customers", customerRoutes);
-app.use("/api/zns", zaloZnsRoutes); // Sử dụng router mới tạo
+app.use("/api/zns", zaloZnsRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/campaigns", campaignRoutes);
+app.use("/api/zns-templates", znsTemplateRoutes);
 
 // Base route for health check
 app.get("/", (req, res) => {
