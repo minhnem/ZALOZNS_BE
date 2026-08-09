@@ -3,7 +3,6 @@ import axios from 'axios';
 import Customer from '../models/Customer.js';
 import Campaign from '../models/Campaign.js';
 import ZaloOAConfig from '../models/ZaloOAConfig.js';
-import ZaloZNS from '../models/ZaloZNS.js'; // Old config with milestones
 import ZnsLog from '../models/ZnsLog.js';
 import Order from '../models/Order.js';
 
@@ -20,6 +19,13 @@ function getPregnancyWeek(edd) {
   return currentWeek < 0 ? 0 : currentWeek;
 }
 
+// Calculate Pregnancy Month
+function getPregnancyMonth(edd) {
+  const week = getPregnancyWeek(edd);
+  if (week === null) return null;
+  return Math.ceil(week / 4);
+}
+
 // Calculate Baby Age in Weeks
 function getBabyAgeInWeeks(dob) {
   if (!dob) return null;
@@ -31,6 +37,19 @@ function getBabyAgeInWeeks(dob) {
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   if (diffDays < 0) return null;
   return Math.floor(diffDays / 7);
+}
+
+// Calculate Baby Age in Months
+function getBabyAgeInMonths(dob) {
+  if (!dob) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const birthDate = new Date(dob);
+  birthDate.setHours(0, 0, 0, 0);
+  const diffTime = today.getTime() - birthDate.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return null;
+  return Math.floor(diffDays / 30);
 }
 
 // Format Phone Number to 84xxx
@@ -97,142 +116,221 @@ export const executeCampaign = async (campaign) => {
       return;
     }
 
-    // Determine target customers based on target_condition
-    let customerQuery = { status: { $ne: 'inactive' }, zns_enabled: { $ne: false } };
-
-    const conditionType = campaign.target_condition?.type;
     const campaignType = campaign.type;
+    let targets = []; // Array of { customer, product_name, refill_date, product_id, milestone_prefix }
 
-    if (campaignType === 'ENCOURAGE_PURCHASE') {
-      // Khích lệ mua hàng: Chỉ gửi cho LEAD (chưa có đơn hàng)
-      customerQuery.customer_type = 'LEAD';
-    }
-    else if (conditionType === 'refill_date' || campaignType === 'PRODUCT_REFILL') {
-      // 1. Refill campaign: Only send to BUYERs whose next_refill_date is today or earlier
+    if (campaignType === 'PRODUCT_REFILL') {
+      // 1. Refill campaign: Send to BUYERs based on Order.expected_refill_date
       const today = new Date();
-      today.setHours(23, 59, 59, 999);
+      today.setHours(0, 0, 0, 0);
+      
+      const reminderDays = campaign.refill_reminder_days || 0;
+      
+      const endDate = new Date(today);
+      endDate.setDate(endDate.getDate() + reminderDays);
+      endDate.setHours(23, 59, 59, 999);
+      
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() + reminderDays);
+      startDate.setHours(0, 0, 0, 0);
 
-      // Bỏ qua check customer_type = BUYER vì có next_refill_date là chắc chắn đã mua hàng
-      customerQuery.next_refill_date = { $lte: today, $ne: null };
-    }
-    else if (conditionType === 'all' || campaignType === 'PROMOTION') {
-      // 2. Send All: Sends to both LEAD and BUYER
-    }
-    else if (conditionType === 'LIFECYCLE') {
-      // 3. Lifecycle (Vòng đời): Send to LEADs (and optionally BUYERs) with baby_dob or edd
-      customerQuery.$or = [
-        { baby_dob: { $exists: true, $ne: null } },
-        { edd: { $exists: true, $ne: null } }
-      ];
-    }
-
-    // --- GLOBAL PRODUCT FILTER ---
-    // Nếu chiến dịch có gắn sản phẩm cụ thể → chỉ gửi cho khách đã mua SP đó
-    if (campaign.product_id) {
-      const orders = await Order.find({ product_id: campaign.product_id }).select('customer_id');
-      const customerIds = [...new Set(orders.map(o => o.customer_id.toString()))];
-
-      if (customerIds.length === 0) {
-        console.log(`[Skip] No customers have purchased product ${campaign.product_id} for campaign [${campaign.name}]`);
-        return;
+      let orderQuery = { expected_refill_date: { $gte: startDate, $lte: endDate } };
+      
+      if (campaign.product_id) {
+        orderQuery.product_id = campaign.product_id;
       }
 
-      // Merge with existing _id query if present
-      if (customerQuery._id) {
-        const existingIds = customerQuery._id.$in || [];
-        const intersected = existingIds.filter(id => customerIds.includes(id.toString()));
-        if (intersected.length === 0) {
-          console.log(`[Skip] No intersecting customers for campaign [${campaign.name}]`);
+      const orders = await Order.find(orderQuery).populate('customer_id');
+      console.log(`Found ${orders.length} refilling orders for this campaign.`);
+
+      for (const order of orders) {
+        const cust = order.customer_id;
+        if (cust && cust.status !== 'inactive' && cust.zns_enabled !== false) {
+           targets.push({
+             customer: cust,
+             product_name: order.product_name,
+             refill_date: order.expected_refill_date,
+             product_id: order.product_id,
+             milestone_prefix: `REFILL_${order.product_id}` // Dùng cho spam check để tách các sp khác nhau
+           });
+        }
+      }
+    } else {
+      // 2. Other Campaigns (ENCOURAGE_PURCHASE, LIFECYCLE, PROMOTION)
+      let customerQuery = { status: { $ne: 'inactive' }, zns_enabled: { $ne: false } };
+
+      if (campaignType === 'ENCOURAGE_PURCHASE') {
+        customerQuery.customer_type = 'LEAD';
+      } else if (campaignType === 'LIFECYCLE') {
+        customerQuery.$or = [
+          { baby_dob: { $exists: true, $ne: null } },
+          { edd: { $exists: true, $ne: null } }
+        ];
+      }
+
+      // --- GLOBAL PRODUCT FILTER ---
+      if (campaign.product_id) {
+        const orders = await Order.find({ product_id: campaign.product_id }).select('customer_id');
+        const customerIds = [...new Set(orders.map(o => o.customer_id.toString()))];
+        if (customerIds.length === 0) {
+          console.log(`[Skip] No customers have purchased product ${campaign.product_id} for campaign [${campaign.name}]`);
           return;
         }
-        customerQuery._id = { $in: intersected };
-      } else {
-        customerQuery._id = { $in: customerIds };
+
+        if (customerQuery._id) {
+          const existingIds = customerQuery._id.$in || [];
+          const intersected = existingIds.filter(id => customerIds.includes(id.toString()));
+          if (intersected.length === 0) return;
+          customerQuery._id = { $in: intersected };
+        } else {
+          customerQuery._id = { $in: customerIds };
+        }
+        console.log(`[Filter] Globally filtered by product_id: ${campaign.product_id}`);
       }
 
-      console.log(`[Filter] Globally filtered by product_id: ${campaign.product_id} → ${customerIds.length} potential customers`);
+      // --- EXCLUSION FILTER (Loại trừ tệp Refill) ---
+      if (campaign.exclude_refill_today) {
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        const endOfToday = new Date(today);
+        endOfToday.setHours(23, 59, 59, 999);
+        
+        // Loại trừ những người có order refill hôm nay
+        const refillingOrders = await Order.find({
+            expected_refill_date: { $gte: today, $lte: endOfToday }
+        }).select('customer_id');
+        const refillingCustomerIds = [...new Set(refillingOrders.map(o => o.customer_id.toString()))];
+
+        if (refillingCustomerIds.length > 0) {
+            if (!customerQuery._id) customerQuery._id = {};
+            if (customerQuery._id.$in) {
+               customerQuery._id.$in = customerQuery._id.$in.filter(id => !refillingCustomerIds.includes(id.toString()));
+            } else {
+               customerQuery._id.$nin = refillingCustomerIds;
+            }
+            console.log(`[Filter] Excluded ${refillingCustomerIds.length} customers with refill due today.`);
+        }
+      }
+
+      const customers = await Customer.find(customerQuery);
+      console.log(`Found ${customers.length} target customers for this campaign.`);
+
+      for (const cust of customers) {
+         targets.push({
+             customer: cust,
+             product_name: cust.last_purchased_product || 'sản phẩm',
+             refill_date: cust.next_refill_date,
+             product_id: campaign.product_id || null,
+             milestone_prefix: ''
+         });
+      }
     }
 
-    // --- EXCLUSION FILTER (Loại trừ tệp Refill) ---
-    if (campaign.exclude_refill_today) {
-      const today = new Date();
-      today.setHours(23, 59, 59, 999);
-      if (!customerQuery.$and) customerQuery.$and = [];
-      customerQuery.$and.push({
-        $or: [
-          { next_refill_date: { $gt: today } },
-          { next_refill_date: null },
-          { next_refill_date: { $exists: false } }
-        ]
-      });
-      console.log(`[Filter] Excluded customers with refill due today.`);
-    }
+    // Campaign milestones
+    const milestones = campaign.milestones || [];
 
-    console.log(`[Debug] customerQuery:`, JSON.stringify(customerQuery, null, 2));
-    const customers = await Customer.find(customerQuery);
-    console.log(`Found ${customers.length} target customers for this campaign.`);
-
-    // If lifecycle, fetch the old ZaloZNS milestones to get the content
-    let legacyMilestones = [];
-    if (conditionType === 'LIFECYCLE') {
-      const oldConfig = await ZaloZNS.findOne();
-      if (oldConfig) legacyMilestones = oldConfig.scriptMilestones || [];
-    }
-
-    for (const customer of customers) {
+    for (const target of targets) {
+      const { customer, product_name, refill_date, product_id, milestone_prefix } = target;
       const formattedPhone = formatPhoneNumber(customer.phone);
       if (!formattedPhone) continue;
 
       let finalTemplateId = campaign.zns_template_id;
+      let milestoneKey = milestone_prefix;
 
       let dynamicDataObj = {};
       if (campaign.dynamic_data) {
         // Safe conversion of Mongoose Map to plain object
-        dynamicDataObj = typeof campaign.dynamic_data.toJSON === 'function' 
-          ? campaign.dynamic_data.toJSON() 
-          : { ...campaign.dynamic_data };
+        if (campaign.dynamic_data instanceof Map) {
+          dynamicDataObj = Object.fromEntries(campaign.dynamic_data);
+        } else if (typeof campaign.dynamic_data.toJSON === 'function') {
+          dynamicDataObj = campaign.dynamic_data.toJSON();
+        } else {
+          dynamicDataObj = { ...campaign.dynamic_data };
+        }
       }
-      console.log(`[Debug] dynamicDataObj for campaign ${campaign.name}:`, JSON.stringify(dynamicDataObj));
 
       // Lifecycle logic matching
-      if (conditionType === 'LIFECYCLE') {
+      if (campaignType === 'LIFECYCLE') {
         let stage = '';
-        let currentWeek = null;
+        let currentAgeWeek = null;
+        let currentAgeMonth = null;
 
         if (customer.baby_dob) {
           stage = 'BABY';
-          currentWeek = getBabyAgeInWeeks(customer.baby_dob);
+          currentAgeWeek = getBabyAgeInWeeks(customer.baby_dob);
+          currentAgeMonth = getBabyAgeInMonths(customer.baby_dob);
         } else if (customer.edd) {
           stage = 'PREGNANCY';
-          currentWeek = getPregnancyWeek(customer.edd);
+          currentAgeWeek = getPregnancyWeek(customer.edd);
+          currentAgeMonth = getPregnancyMonth(customer.edd);
         }
 
-        if (currentWeek === null) continue;
+        if (currentAgeWeek === null && currentAgeMonth === null) continue;
 
-        const milestone = legacyMilestones.find(
-          m => m.stage === stage && m.weekAge === currentWeek
-        );
-        if (!milestone) continue; // No milestone script for this week
+        // Find matching milestone in campaign config
+        const milestone = milestones.find(m => {
+          if (m.stage !== stage) return false;
+          if (m.time_unit === 'WEEK' && m.time_value === currentAgeWeek) return true;
+          if (m.time_unit === 'MONTH' && m.time_value === currentAgeMonth) return true;
+          return false;
+        });
 
-        // Override template data with milestone data
-        dynamicDataObj.stage_greetings = milestone.stage_greetings;
-        dynamicDataObj.care_content = milestone.care_content;
-        dynamicDataObj.recommended_items = milestone.recommended_items;
+        if (!milestone) continue; // No milestone script for this exact age
+
+        // Override finalTemplateId if milestone has one configured
+        if (milestone.zns_template_id) {
+          finalTemplateId = milestone.zns_template_id;
+        }
+        
+        milestoneKey = `${milestone.stage}_${milestone.time_unit}_${milestone.time_value}`;
+
+        // Merge milestone dynamic data into template payload
+        if (milestone.dynamic_data) {
+          let mData = {};
+          if (milestone.dynamic_data instanceof Map) {
+            mData = Object.fromEntries(milestone.dynamic_data);
+          } else if (typeof milestone.dynamic_data.toJSON === 'function') {
+            mData = milestone.dynamic_data.toJSON();
+          } else {
+            mData = { ...milestone.dynamic_data };
+          }
+          dynamicDataObj = { ...dynamicDataObj, ...mData };
+        }
       }
 
-      // Anti-Spam Check: Check if this exact campaign has been sent to this customer successfully within the last 15 days
-      const spamThreshold = new Date();
-      spamThreshold.setDate(spamThreshold.getDate() - 15); // Adjust threshold as needed
-
-      const existingLog = await ZnsLog.findOne({
-        campaign_id: campaign._id,
-        phoneSent: formattedPhone,
-        status: 'success',
-        sentAt: { $gte: spamThreshold }
-      });
+      // Anti-Spam Check
+      let existingLog;
+      if (campaignType === 'LIFECYCLE') {
+        existingLog = await ZnsLog.findOne({
+          campaign_id: campaign._id,
+          phoneSent: formattedPhone,
+          status: 'success',
+          milestone_key: milestoneKey
+        });
+      } else if (campaignType === 'PRODUCT_REFILL') {
+        // Chỉ block nếu đúng loại sản phẩm này đã được gửi nhắc nhở gần đây
+        const spamThreshold = new Date();
+        spamThreshold.setDate(spamThreshold.getDate() - 15);
+        existingLog = await ZnsLog.findOne({
+          campaign_id: campaign._id,
+          phoneSent: formattedPhone,
+          status: 'success',
+          sentAt: { $gte: spamThreshold },
+          milestone_key: milestoneKey
+        });
+      } else {
+        const spamThreshold = new Date();
+        spamThreshold.setDate(spamThreshold.getDate() - 15);
+        existingLog = await ZnsLog.findOne({
+          campaign_id: campaign._id,
+          phoneSent: formattedPhone,
+          status: 'success',
+          sentAt: { $gte: spamThreshold }
+        });
+      }
 
       if (existingLog) {
-        console.log(`[Skip] Already sent Campaign [${campaign.name}] to ${formattedPhone} recently.`);
+        console.log(`[Skip] Already sent Campaign [${campaign.name}]${milestoneKey ? ` (Milestone: ${milestoneKey})` : ''} to ${formattedPhone}.`);
         continue;
       }
 
@@ -242,20 +340,18 @@ export const executeCampaign = async (campaign) => {
       // 1. System level variables (always provided if matched)
       templateData['customer_name'] = customer.name || 'Quý khách';
       templateData['phone'] = formattedPhone;
-      templateData['product_name'] = customer.last_purchased_product || 'sản phẩm';
-      if (customer.next_refill_date) {
-        templateData['refill_date'] = new Date(customer.next_refill_date).toLocaleDateString('vi-VN');
+      templateData['product_name'] = product_name;
+      if (refill_date) {
+        templateData['refill_date'] = new Date(refill_date).toLocaleDateString('vi-VN');
       }
 
       // 2. Override with custom campaign variables (from the UI) and Lifecycle milestones
       for (const [key, value] of Object.entries(dynamicDataObj)) {
-        // Gọt bỏ dấu ngoặc nhọn < > nếu có (VD: <voucher_code> -> voucher_code)
-        const cleanKey = key.replace(/^[<]+|[>]+$/g, '');
+        const cleanKey = key.trim().replace(/^[<]+|[>]+$/g, '').trim();
         templateData[cleanKey] = value;
       }
 
-      // 3. Prevent Zalo validation error for missing variables (e.g. 'expire') 
-      // by injecting dummy values if not provided by the UI.
+      // 3. Prevent Zalo validation error for missing variables
       if (!templateData.expire) {
         templateData.expire = '31/12/2099';
       }
@@ -283,9 +379,11 @@ export const executeCampaign = async (campaign) => {
             customerId: customer._id,
             phoneSent: formattedPhone,
             status: 'success',
-            znsTemplateId: campaign.zns_template_id,
+            znsTemplateId: finalTemplateId,
             zaloMessageId: result.data?.message_id,
             campaign_id: campaign._id,
+            campaign_type: campaignType,
+            milestone_key: milestoneKey,
             trigger_type: 'CRON_AUTO'
           });
           console.log(`[Success] ZNS sent to ${formattedPhone}`);
@@ -299,9 +397,11 @@ export const executeCampaign = async (campaign) => {
           customerId: customer._id,
           phoneSent: formattedPhone,
           status: 'failed',
-          znsTemplateId: campaign.zns_template_id,
+          znsTemplateId: finalTemplateId,
           errorMessage: error.response?.data?.message || error.message,
           campaign_id: campaign._id,
+          campaign_type: campaignType,
+          milestone_key: milestoneKey,
           trigger_type: 'CRON_AUTO'
         });
       }
@@ -311,53 +411,68 @@ export const executeCampaign = async (campaign) => {
   }
 };
 
-// 3. Main Dispatcher Function
-export const runCampaignDispatcher = async () => {
-  console.log('--- Running Zalo ZNS Campaign Dispatcher ---');
-  try {
-    const now = new Date();
+// --- MULTI-CRON JOB MANAGEMENT ---
+export const activeCronJobs = new Map();
 
-    // Find auto-run campaigns that are active.
-    // If they have a start_time, it must be <= now.
-    // If they have an end_time, it must be >= now.
-    const activeCampaigns = await Campaign.find({
-      status: 'active',
-      is_auto_run: true,
-      $or: [
-        { start_time: { $exists: false } },
-        { start_time: null },
-        { start_time: { $lte: now } }
-      ],
-      $and: [
-        {
-          $or: [
-            { end_time: { $exists: false } },
-            { end_time: null },
-            { end_time: { $gte: now } }
-          ]
-        }
-      ]
-    });
-
-    console.log(`Found ${activeCampaigns.length} active auto-run campaigns.`);
-
-    for (const campaign of activeCampaigns) {
-      await executeCampaign(campaign);
-    }
-
-  } catch (error) {
-    console.error('Error in Campaign Dispatcher:', error);
+export const removeCampaignCronJob = (campaignId) => {
+  const idStr = campaignId.toString();
+  const job = activeCronJobs.get(idStr);
+  if (job) {
+    job.stop();
+    activeCronJobs.delete(idStr);
+    console.log(`[Cron] Removed job for campaign ID ${idStr}`);
   }
 };
 
-// 4. Schedule the Jobs
+export const updateCampaignCronJob = (campaign) => {
+  const idStr = campaign._id.toString();
+  removeCampaignCronJob(idStr);
+  
+  // Default to 09:00 AM if no schedule is provided but it's set to auto-run
+  const scheduleTime = campaign.recurring_schedule || '0 9 * * *';
+
+  if (campaign.status === 'active' && campaign.is_auto_run) {
+    const job = cron.schedule(scheduleTime, async () => {
+      // Re-fetch to ensure it's still active and within time constraints
+      const dbCamp = await Campaign.findById(idStr);
+      if (!dbCamp || dbCamp.status !== 'active' || !dbCamp.is_auto_run) {
+        removeCampaignCronJob(idStr);
+        return;
+      }
+      
+      const now = new Date();
+      if (dbCamp.start_time && new Date(dbCamp.start_time) > now) return;
+      if (dbCamp.end_time && new Date(dbCamp.end_time) < now) {
+        // If expired, we can optionally stop it
+        removeCampaignCronJob(idStr);
+        return;
+      }
+
+      await executeCampaign(dbCamp);
+    });
+    
+    activeCronJobs.set(idStr, job);
+    console.log(`[Cron] Scheduled job for campaign [${campaign.name}] at ${scheduleTime}`);
+  }
+};
+
+export const initCampaignCronJobs = async () => {
+  try {
+    const campaigns = await Campaign.find({ status: 'active', is_auto_run: true });
+    campaigns.forEach(updateCampaignCronJob);
+    console.log(`[Cron] Initialized ${activeCronJobs.size} dynamic campaign jobs.`);
+  } catch (error) {
+    console.error('Error initializing campaign cron jobs:', error);
+  }
+};
+
+// 4. Schedule the Jobs (System Level)
 export const scheduleZaloZNS = () => {
   // Job 1: Refresh Token every day at 08:30 AM
   cron.schedule('30 8 * * *', refreshZaloToken);
 
-  // Job 2: Campaign Dispatcher every day at 09:00 AM
-  // We keep it at 9:00 AM as requested by the UI (so it sends batch messages in the morning).
-  cron.schedule('0 9 * * *', runCampaignDispatcher);
+  // Job 2: Initialize all dynamic campaign jobs
+  initCampaignCronJobs();
 
-  console.log('Zalo ZNS Cron Jobs Scheduled: Token Refresh at 08:30 AM, Dispatcher at 09:00 AM');
+  console.log('Zalo ZNS Cron Jobs Scheduled: Token Refresh at 08:30 AM, and Dynamic Campaign Jobs.');
 };

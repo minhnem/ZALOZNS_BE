@@ -43,7 +43,34 @@ export const getCustomers = async (req, res) => {
       filter.customer_type = req.query.type;
     }
     
-    const customers = await Customer.find(filter).sort({ createdAt: -1 });
+    // Tìm khách hàng
+    let customers = await Customer.find(filter).sort({ createdAt: -1 }).lean();
+    
+    // Lấy ID của tất cả khách hàng
+    const customerIds = customers.map(c => c._id);
+    
+    // Lấy tất cả Order liên quan
+    const orders = await Order.find({ customer_id: { $in: customerIds } }).sort({ expected_refill_date: 1 }).lean();
+    
+    // Ghép Order vào mảng purchased_products
+    customers = customers.map(customer => {
+      const customerOrders = orders.filter(o => o.customer_id.toString() === customer._id.toString());
+      
+      // Group by product_id to only show the latest order per product, or just show all active ones. 
+      // Tạm thời hiển thị tất cả các tracking orders có expected_refill_date
+      const purchased_products = customerOrders
+        .filter(o => o.expected_refill_date)
+        .map(o => ({
+           product_name: o.product_name,
+           expected_refill_date: o.expected_refill_date
+        }));
+
+      return {
+        ...customer,
+        purchased_products
+      };
+    });
+
     res.status(200).json(customers);
   } catch (error) {
     console.error('Error fetching customers:', error);

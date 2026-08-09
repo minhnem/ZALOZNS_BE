@@ -1,5 +1,5 @@
 import Campaign from '../models/Campaign.js';
-import { runCampaignDispatcher, executeCampaign } from '../services/zaloZnsService.js';
+import { executeCampaign, updateCampaignCronJob, removeCampaignCronJob } from '../services/zaloZnsService.js';
 
 export const getCampaigns = async (req, res) => {
   try {
@@ -36,6 +36,7 @@ export const createCampaign = async (req, res) => {
   try {
     const campaign = new Campaign(req.body);
     const saved = await campaign.save();
+    updateCampaignCronJob(saved);
     res.status(201).json(saved);
   } catch (error) {
     console.error('Error creating campaign:', error);
@@ -50,6 +51,7 @@ export const updateCampaign = async (req, res) => {
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
+    updateCampaignCronJob(updated);
     res.status(200).json(updated);
   } catch (error) {
     console.error('Error updating campaign:', error);
@@ -64,6 +66,7 @@ export const deleteCampaign = async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
+    removeCampaignCronJob(id);
     res.status(200).json({ message: 'Đã xóa chiến dịch thành công' });
   } catch (error) {
     console.error('Error deleting campaign:', error);
@@ -75,9 +78,12 @@ export const triggerManualCampaign = async (req, res) => {
   try {
     const { campaignId, audience } = req.body;
     
-    // Nếu chọn 'all', chạy dispatcher mặc định (quét tất cả campaign active)
+    // Nếu chọn 'all', chạy dispatcher thủ công (quét tất cả campaign active)
     if (campaignId === 'all') {
-      await runCampaignDispatcher();
+      const activeCampaigns = await Campaign.find({ status: 'active' });
+      for (const camp of activeCampaigns) {
+        await executeCampaign(camp);
+      }
       return res.status(200).json({ message: 'Đã kích hoạt quét toàn bộ hệ thống.' });
     }
 

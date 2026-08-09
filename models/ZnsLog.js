@@ -13,6 +13,8 @@ const znsLogSchema = new mongoose.Schema({
 
   // Trường mới — Campaign tracking
   campaign_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Campaign' },
+  campaign_type: { type: String }, // LIFECYCLE, PRODUCT_REFILL, etc.
+  milestone_key: { type: String }, // e.g. BABY_MONTH_2
   trigger_type: { type: String, enum: ['CRON_AUTO', 'MANUAL_TRIGGER'], default: 'CRON_AUTO' }
 }, { timestamps: true });
 

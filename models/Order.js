@@ -30,11 +30,12 @@ const orderSchema = new mongoose.Schema({
     default: 0 
   },
   expected_refill_date: { 
-    type: Date 
+    type: Date,
+    index: true // Thêm index để truy vấn Cronjob nhanh hơn
   }
 }, { timestamps: true });
 
-// Mongoose Hook: Sau khi tạo Order, tự động cập nhật Customer.next_refill_date
+// Mongoose Hook: Sau khi tạo Order, tính expected_refill_date và cập nhật Customer type
 orderSchema.post('save', async function (doc) {
   try {
     const Product = mongoose.model('Product');
@@ -52,14 +53,12 @@ orderSchema.post('save', async function (doc) {
       expected_refill_date: refillDate
     });
 
-    // Cập nhật Customer.next_refill_date = ngày refill gần nhất trong tương lai, đồng thời chuyển loại thành BUYER
+    // Cập nhật Customer.customer_type = BUYER (không cập nhật đè product/refill date nữa)
     await Customer.findByIdAndUpdate(doc.customer_id, {
-      next_refill_date: refillDate,
-      last_purchased_product: doc.product_name,
       customer_type: 'BUYER'
     });
 
-    console.log(`[Order Hook] Updated next_refill_date for customer ${doc.customer_id} → ${refillDate.toISOString()}`);
+    console.log(`[Order Hook] Calculated expected_refill_date for order ${doc._id} → ${refillDate.toISOString()}`);
   } catch (error) {
     console.error('[Order Hook Error]', error.message);
   }

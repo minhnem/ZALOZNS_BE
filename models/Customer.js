@@ -15,9 +15,11 @@ const customerSchema = new mongoose.Schema({
   source: { type: String, default: 'MANUAL_ENTRY' },
   customer_type: { type: String, enum: ['LEAD', 'BUYER'], default: 'LEAD' },
 
-  // Trường mới — Refill & ZNS
+  // Trường cũ (Deprecated) — Chuyển sang lấy dữ liệu từ Order
   next_refill_date: { type: Date },
   last_purchased_product: { type: String },
+  
+  // ZNS Config
   zns_enabled: { type: Boolean, default: true }
 }, { timestamps: true });
 

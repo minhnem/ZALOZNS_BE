@@ -10,6 +10,7 @@ import productRoutes from "./routes/productRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import campaignRoutes from "./routes/campaignRoutes.js";
 import znsTemplateRoutes from "./routes/znsTemplateRoutes.js";
+import dashboardRoutes from "./routes/dashboardRoutes.js";
 import { scheduleZaloZNS } from "./services/zaloZnsService.js";
 
 dotenv.config();
@@ -29,6 +30,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/campaigns", campaignRoutes);
 app.use("/api/zns-templates", znsTemplateRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 // Base route for health check
 app.get("/", (req, res) => {

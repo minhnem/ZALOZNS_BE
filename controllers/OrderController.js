@@ -40,6 +40,20 @@ export const createOrder = async (req, res) => {
 export const updateOrder = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Nếu có cập nhật ngày mua, tự động tính lại expected_refill_date
+    if (req.body.purchase_date) {
+      const order = await Order.findById(id);
+      if (order) {
+        const product = await Product.findById(order.product_id);
+        if (product && product.usage_cycle_days) {
+          const refillDate = new Date(req.body.purchase_date);
+          refillDate.setDate(refillDate.getDate() + product.usage_cycle_days);
+          req.body.expected_refill_date = refillDate;
+        }
+      }
+    }
+
     const updated = await Order.findByIdAndUpdate(id, req.body, { new: true });
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });

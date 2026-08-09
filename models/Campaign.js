@@ -23,15 +23,17 @@ const campaignSchema = new mongoose.Schema({
   end_time: { type: Date },
   recurring_schedule: { type: String, default: '' },
 
-  // Cấu hình kịch bản
-  target_condition: {
-    type: { 
-      type: String, 
-      enum: ['all', 'product', 'baby_age', 'refill_date'], 
-      default: 'refill_date' 
-    },
-    value: { type: String, default: '3 ngày' }
-  },
+  // Cấu hình kịch bản nhắc mua lại
+  refill_reminder_days: { type: Number, default: 0 },
+
+  // Cấu hình kịch bản mốc thời gian (dành cho vòng đời)
+  milestones: [{
+    stage: { type: String, enum: ['PREGNANCY', 'BABY'], required: true },
+    time_unit: { type: String, enum: ['WEEK', 'MONTH'], default: 'MONTH' },
+    time_value: { type: Number, required: true },
+    zns_template_id: { type: String },
+    dynamic_data: { type: Map, of: String, default: {} }
+  }],
 
   zns_template_id: { type: String },
 
