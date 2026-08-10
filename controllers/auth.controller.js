@@ -1,6 +1,7 @@
 import { User } from '../models/User.model.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { deleteFileByUrl } from '../utils/cloudinary.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_please_change_in_production';
 
@@ -42,7 +43,8 @@ export const register = async (req, res) => {
       user: {
         id: newUser._id,
         fullName: newUser.fullName,
-        email: newUser.email
+        email: newUser.email,
+        avatar: newUser.avatar
       },
       token
     });
@@ -82,7 +84,8 @@ export const login = async (req, res) => {
       user: {
         id: user._id,
         fullName: user.fullName,
-        email: user.email
+        email: user.email,
+        avatar: user.avatar
       },
       token
     });
@@ -91,3 +94,42 @@ export const login = async (req, res) => {
     res.status(500).json({ message: 'Lỗi máy chủ nội bộ. Vui lòng thử lại.' });
   }
 };
+
+export const updateProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { fullName, avatar } = req.body;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'Người dùng không tồn tại.' });
+    }
+
+    if (avatar && user.avatar && avatar !== user.avatar) {
+      try {
+        await deleteFileByUrl(user.avatar);
+      } catch (err) {
+        console.error('Lỗi khi xóa ảnh cũ:', err);
+      }
+    }
+
+    if (fullName) user.fullName = fullName;
+    if (avatar !== undefined) user.avatar = avatar;
+
+    await user.save();
+
+    res.status(200).json({
+      message: 'Cập nhật hồ sơ thành công!',
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        avatar: user.avatar
+      }
+    });
+  } catch (error) {
+    console.error('Lỗi API Cập nhật hồ sơ:', error);
+    res.status(500).json({ message: 'Lỗi máy chủ nội bộ. Vui lòng thử lại.' });
+  }
+};
+

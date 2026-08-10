@@ -17,6 +17,10 @@ const userSchema = new mongoose.Schema({
   password_hash: {
     type: String,
     required: [true, 'Mật khẩu là bắt buộc']
+  },
+  avatar: {
+    type: String,
+    default: ''
   }
 }, { timestamps: true });
 
