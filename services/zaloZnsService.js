@@ -26,6 +26,19 @@ function getPregnancyMonth(edd) {
   return Math.ceil(week / 4);
 }
 
+// Calculate Pregnancy Day
+function getPregnancyDay(edd) {
+  if (!edd) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const eddDate = new Date(edd);
+  eddDate.setHours(0, 0, 0, 0);
+  const diffTime = eddDate.getTime() - today.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const currentDay = 280 - diffDays;
+  return currentDay < 0 ? 0 : currentDay;
+}
+
 // Calculate Baby Age in Weeks
 function getBabyAgeInWeeks(dob) {
   if (!dob) return null;
@@ -37,6 +50,18 @@ function getBabyAgeInWeeks(dob) {
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   if (diffDays < 0) return null;
   return Math.floor(diffDays / 7);
+}
+
+// Calculate Baby Age in Days
+function getBabyAgeInDays(dob) {
+  if (!dob) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const birthDate = new Date(dob);
+  birthDate.setHours(0, 0, 0, 0);
+  const diffTime = today.getTime() - birthDate.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays < 0 ? null : diffDays;
 }
 
 // Calculate Baby Age in Months
@@ -252,24 +277,28 @@ export const executeCampaign = async (campaign) => {
       // Lifecycle logic matching
       if (campaignType === 'LIFECYCLE') {
         let stage = '';
+        let currentAgeDay = null;
         let currentAgeWeek = null;
         let currentAgeMonth = null;
 
         if (customer.baby_dob) {
           stage = 'BABY';
+          currentAgeDay = getBabyAgeInDays(customer.baby_dob);
           currentAgeWeek = getBabyAgeInWeeks(customer.baby_dob);
           currentAgeMonth = getBabyAgeInMonths(customer.baby_dob);
         } else if (customer.edd) {
           stage = 'PREGNANCY';
+          currentAgeDay = getPregnancyDay(customer.edd);
           currentAgeWeek = getPregnancyWeek(customer.edd);
           currentAgeMonth = getPregnancyMonth(customer.edd);
         }
 
-        if (currentAgeWeek === null && currentAgeMonth === null) continue;
+        if (currentAgeDay === null && currentAgeWeek === null && currentAgeMonth === null) continue;
 
         // Find matching milestone in campaign config
         const milestone = milestones.find(m => {
           if (m.stage !== stage) return false;
+          if (m.time_unit === 'DAY' && m.time_value === currentAgeDay) return true;
           if (m.time_unit === 'WEEK' && m.time_value === currentAgeWeek) return true;
           if (m.time_unit === 'MONTH' && m.time_value === currentAgeMonth) return true;
           return false;
