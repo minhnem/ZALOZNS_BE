@@ -45,7 +45,10 @@ const campaignSchema = new mongoose.Schema({
     stage: { type: String, enum: ['PREGNANCY', 'BABY'] },
     time_unit: { type: String, enum: ['DAY', 'WEEK', 'MONTH'], default: 'MONTH' },
     time_value: { type: Number },
+    product_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     zns_template_id: { type: String },
+    remind_before_days: { type: Number, default: 3 },
+    remind_on_exact_date: { type: Boolean, default: true },
     dynamic_data: { type: Map, of: String, default: {} }
   }],
 
@@ -55,7 +58,19 @@ const campaignSchema = new mongoose.Schema({
     execute_time: { type: Date, required: true },
     zns_template_id: { type: String, required: true },
     exclude_converted: { type: Boolean, default: false },
-    dynamic_data: { type: Map, of: String, default: {} }
+    dynamic_data: { type: Map, of: String, default: {} },
+
+    // Điều kiện lọc đối tượng riêng cho từng sự kiện con
+    audience_condition: {
+      type: { 
+        type: String, 
+        enum: ['ALL', 'NOT_PURCHASED_SINCE_EVENT', 'BABY_AGE_RANGE', 'NO_ORDER_THIS_MONTH'],
+        default: 'ALL'
+      },
+      since_event_index: { type: Number },
+      baby_age_min: { type: Number },
+      baby_age_max: { type: Number },
+    }
   }],
 
   zns_template_id: { type: String },

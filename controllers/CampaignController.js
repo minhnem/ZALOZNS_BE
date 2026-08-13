@@ -1,5 +1,45 @@
 import Campaign from '../models/Campaign.js';
-import { executeCampaign, updateCampaignCronJob, removeCampaignCronJob } from '../services/zaloZnsService.js';
+import Product from '../models/Product.js';
+import Order from '../models/Order.js';
+import { executeCampaign, executeMasterSubEvent, updateCampaignCronJob, removeCampaignCronJob } from '../services/zaloZnsService.js';
+
+const syncProductCyclesAndOrders = async (milestones) => {
+  if (!Array.isArray(milestones)) return;
+  for (const m of milestones) {
+    if (m.product_id && m.usage_cycle_days) {
+      const cycle = parseInt(m.usage_cycle_days, 10);
+      if (isNaN(cycle) || cycle <= 0) continue;
+
+      const product = await Product.findById(m.product_id);
+      if (product && product.usage_cycle_days !== cycle) {
+        // Update product cycle
+        product.usage_cycle_days = cycle;
+        await product.save();
+        
+        // Retroactively update orders (where expected_refill_date is null/missing)
+        const ordersToUpdate = await Order.find({ 
+          product_id: product._id, 
+          $or: [{ expected_refill_date: null }, { expected_refill_date: { $exists: false } }] 
+        });
+        
+        if (ordersToUpdate.length > 0) {
+          const bulkOps = ordersToUpdate.map(order => {
+            const refillDate = new Date(order.purchase_date);
+            refillDate.setDate(refillDate.getDate() + cycle);
+            return {
+              updateOne: {
+                filter: { _id: order._id },
+                update: { $set: { expected_refill_date: refillDate } }
+              }
+            };
+          });
+          await Order.bulkWrite(bulkOps);
+          console.log(`[Sync] Updated ${bulkOps.length} orders for product ${product._id} with cycle ${cycle} days.`);
+        }
+      }
+    }
+  }
+};
 
 export const getCampaigns = async (req, res) => {
   try {
@@ -10,6 +50,7 @@ export const getCampaigns = async (req, res) => {
 
     const campaigns = await Campaign.find(filter)
       .populate('product_id', 'name category usage_cycle_days')
+      .populate('milestones.product_id', 'name category usage_cycle_days')
       .sort({ createdAt: -1 });
     res.status(200).json(campaigns);
   } catch (error) {
@@ -21,7 +62,8 @@ export const getCampaigns = async (req, res) => {
 export const getCampaignById = async (req, res) => {
   try {
     const campaign = await Campaign.findById(req.params.id)
-      .populate('product_id', 'name category usage_cycle_days');
+      .populate('product_id', 'name category usage_cycle_days')
+      .populate('milestones.product_id', 'name category usage_cycle_days');
     if (!campaign) {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
@@ -34,6 +76,9 @@ export const getCampaignById = async (req, res) => {
 
 export const createCampaign = async (req, res) => {
   try {
+    if (req.body.type === 'PRODUCT_REFILL' && req.body.milestones) {
+      await syncProductCyclesAndOrders(req.body.milestones);
+    }
     const campaign = new Campaign(req.body);
     const saved = await campaign.save();
     updateCampaignCronJob(saved);
@@ -47,7 +92,10 @@ export const createCampaign = async (req, res) => {
 export const updateCampaign = async (req, res) => {
   try {
     const { id } = req.params;
-    const updated = await Campaign.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
+    if (req.body.type === 'PRODUCT_REFILL' && req.body.milestones) {
+      await syncProductCyclesAndOrders(req.body.milestones);
+    }
+    const updated = await Campaign.findByIdAndUpdate(id, req.body, { returnDocument: 'after', runValidators: true });
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
@@ -76,7 +124,7 @@ export const deleteCampaign = async (req, res) => {
 
 export const triggerManualCampaign = async (req, res) => {
   try {
-    const { campaignId, audience } = req.body;
+    const { campaignId, audience, subEventIndex } = req.body;
     
     // Nếu chọn 'all', chạy dispatcher thủ công (quét tất cả campaign active)
     if (campaignId === 'all') {
@@ -93,8 +141,31 @@ export const triggerManualCampaign = async (req, res) => {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
 
-    // Chạy chiến dịch đó (tạm thời bỏ qua filter audience=test ở level DB, 
-    // vì ta chỉ cần kích hoạt hàm executeCampaign)
+    // Master Campaign: chạy sub-events
+    if (campaign.type === 'MASTER_CAMPAIGN') {
+      const subEvents = campaign.sub_events || [];
+      if (subEvents.length === 0) {
+        return res.status(400).json({ message: 'Chiến dịch không có sự kiện con nào.' });
+      }
+
+      // Nếu truyền subEventIndex → chạy 1 sub-event cụ thể
+      if (subEventIndex !== undefined && subEventIndex !== null) {
+        const idx = parseInt(subEventIndex, 10);
+        if (idx < 0 || idx >= subEvents.length) {
+          return res.status(400).json({ message: `Sub-event index ${idx} không hợp lệ.` });
+        }
+        await executeMasterSubEvent(campaign, subEvents[idx], idx);
+        return res.status(200).json({ message: `Đã kích hoạt sự kiện con [${subEvents[idx].name}] thành công.` });
+      }
+
+      // Nếu không truyền index → chạy tất cả sub-events
+      for (let i = 0; i < subEvents.length; i++) {
+        await executeMasterSubEvent(campaign, subEvents[i], i);
+      }
+      return res.status(200).json({ message: `Đã kích hoạt toàn bộ ${subEvents.length} sự kiện con thành công.` });
+    }
+
+    // Chạy chiến dịch thường
     await executeCampaign(campaign);
 
     res.status(200).json({ message: 'Đã kích hoạt chiến dịch thành công' });

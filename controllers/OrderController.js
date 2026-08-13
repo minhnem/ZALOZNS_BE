@@ -54,7 +54,7 @@ export const updateOrder = async (req, res) => {
       }
     }
 
-    const updated = await Order.findByIdAndUpdate(id, req.body, { new: true });
+    const updated = await Order.findByIdAndUpdate(id, req.body, { returnDocument: 'after' });
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
     }

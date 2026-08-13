@@ -135,49 +135,76 @@ export const refreshZaloToken = async () => {
 export const executeCampaign = async (campaign) => {
   console.log(`\n>>> Executing Campaign: [${campaign.name}]`);
   try {
-    const config = await getZaloConfig();
+    let config = await getZaloConfig();
     if (!config.access_token) {
       console.error('Access token is missing. Please refresh token first.');
       return;
+    }
+
+    if (config.token_expires_at && new Date(config.token_expires_at) <= new Date(Date.now() + 5 * 60000)) {
+        console.log('[Info] Access token is expired or about to expire. Refreshing before campaign execution...');
+        await refreshZaloToken();
+        config = await getZaloConfig();
     }
 
     const campaignType = campaign.type;
     let targets = []; // Array of { customer, product_name, refill_date, product_id, milestone_prefix }
 
     if (campaignType === 'PRODUCT_REFILL') {
-      // 1. Refill campaign: Send to BUYERs based on Order.expected_refill_date
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const reminderDays = campaign.refill_reminder_days || 0;
-      
-      const endDate = new Date(today);
-      endDate.setDate(endDate.getDate() + reminderDays);
-      endDate.setHours(23, 59, 59, 999);
-      
-      const startDate = new Date(today);
-      startDate.setDate(startDate.getDate() + reminderDays);
-      startDate.setHours(0, 0, 0, 0);
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(todayStart);
+      todayEnd.setHours(23, 59, 59, 999);
 
-      let orderQuery = { expected_refill_date: { $gte: startDate, $lte: endDate } };
-      
-      if (campaign.product_id) {
-        orderQuery.product_id = campaign.product_id;
-      }
+      const milestones = campaign.milestones || [];
+      for (const milestone of milestones) {
+        if (!milestone.product_id) continue;
+        
+        let conditions = [];
 
-      const orders = await Order.find(orderQuery).populate('customer_id');
-      console.log(`Found ${orders.length} refilling orders for this campaign.`);
+        // 1. Nhắc đúng ngày
+        if (milestone.remind_on_exact_date !== false) {
+           conditions.push({ expected_refill_date: { $gte: todayStart, $lte: todayEnd } });
+        }
 
-      for (const order of orders) {
-        const cust = order.customer_id;
-        if (cust && cust.status !== 'inactive' && cust.zns_enabled !== false) {
-           targets.push({
-             customer: cust,
-             product_name: order.product_name,
-             refill_date: order.expected_refill_date,
-             product_id: order.product_id,
-             milestone_prefix: `REFILL_${order.product_id}` // Dùng cho spam check để tách các sp khác nhau
-           });
+        // 2. Nhắc trước X ngày
+        const remindBefore = milestone.remind_before_days !== undefined ? milestone.remind_before_days : 3;
+        if (remindBefore > 0) {
+           const futureStart = new Date(todayStart);
+           futureStart.setDate(futureStart.getDate() + remindBefore);
+           const futureEnd = new Date(futureStart);
+           futureEnd.setHours(23, 59, 59, 999);
+           conditions.push({ expected_refill_date: { $gte: futureStart, $lte: futureEnd } });
+        }
+
+        if (conditions.length === 0) continue;
+
+        let orderQuery = { 
+          product_id: milestone.product_id,
+          $or: conditions
+        };
+
+        const orders = await Order.find(orderQuery).populate('customer_id');
+        console.log(`Found ${orders.length} refilling orders for product ${milestone.product_id}.`);
+
+        for (const order of orders) {
+          const cust = order.customer_id;
+          if (cust && cust.status !== 'inactive' && cust.zns_enabled !== false) {
+             let remindType = 'EXACT';
+             if (order.expected_refill_date > todayEnd) {
+                remindType = 'BEFORE';
+             }
+
+             targets.push({
+               customer: cust,
+               product_name: order.product_name,
+               refill_date: order.expected_refill_date,
+               product_id: order.product_id,
+               remind_type: remindType,
+               milestone_prefix: `REFILL_${order.product_id}_${remindType}`,
+               milestone_match: milestone
+             });
+          }
         }
       }
     } else {
@@ -255,7 +282,7 @@ export const executeCampaign = async (campaign) => {
     const milestones = campaign.milestones || [];
 
     for (const target of targets) {
-      const { customer, product_name, refill_date, product_id, milestone_prefix } = target;
+      const { customer, product_name, refill_date, product_id, milestone_prefix, milestone_match } = target;
       const formattedPhone = formatPhoneNumber(customer.phone);
       if (!formattedPhone) continue;
 
@@ -314,6 +341,22 @@ export const executeCampaign = async (campaign) => {
         milestoneKey = `${milestone.stage}_${milestone.time_unit}_${milestone.time_value}`;
 
         // Merge milestone dynamic data into template payload
+        if (milestone.dynamic_data) {
+          let mData = {};
+          if (milestone.dynamic_data instanceof Map) {
+            mData = Object.fromEntries(milestone.dynamic_data);
+          } else if (typeof milestone.dynamic_data.toJSON === 'function') {
+            mData = milestone.dynamic_data.toJSON();
+          } else {
+            mData = { ...milestone.dynamic_data };
+          }
+          dynamicDataObj = { ...dynamicDataObj, ...mData };
+        }
+      } else if (campaignType === 'PRODUCT_REFILL' && milestone_match) {
+        const milestone = milestone_match;
+        if (milestone.zns_template_id) {
+          finalTemplateId = milestone.zns_template_id;
+        }
         if (milestone.dynamic_data) {
           let mData = {};
           if (milestone.dynamic_data instanceof Map) {
@@ -420,14 +463,23 @@ export const executeCampaign = async (campaign) => {
           throw new Error(result.message);
         }
       } catch (error) {
-        console.error(`[Error] Failed ZNS to ${formattedPhone}:`, error.response?.data?.message || error.message);
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[Error] Failed ZNS to ${formattedPhone}:`, errorMsg);
+        
+        if (errorMsg.includes('Access token invalid') || errorMsg.includes('token') || errorMsg.includes('Invalid Access Token')) {
+            console.log('[Info] Attempting to refresh token dynamically...');
+            await refreshZaloToken();
+            config = await getZaloConfig();
+            // Lần gửi sau trong vòng lặp sẽ dùng config.access_token mới
+        }
+
         // Log failure
         await ZnsLog.create({
           customerId: customer._id,
           phoneSent: formattedPhone,
           status: 'failed',
           znsTemplateId: finalTemplateId,
-          errorMessage: error.response?.data?.message || error.message,
+          errorMessage: errorMsg,
           campaign_id: campaign._id,
           campaign_type: campaignType,
           milestone_key: milestoneKey,
@@ -440,56 +492,305 @@ export const executeCampaign = async (campaign) => {
   }
 };
 
+// 3. Execute a Single Sub-Event of a Master Campaign
+export const executeMasterSubEvent = async (campaign, subEvent, subEventIndex) => {
+  console.log(`\n>>> Executing Master Sub-Event [${subEvent.name}] (Index: ${subEventIndex}) of Campaign [${campaign.name}]`);
+  try {
+    let config = await getZaloConfig();
+    if (!config.access_token) {
+      console.error('Access token is missing. Please refresh token first.');
+      return;
+    }
+
+    if (config.token_expires_at && new Date(config.token_expires_at) <= new Date(Date.now() + 5 * 60000)) {
+      console.log('[Info] Access token is expired or about to expire. Refreshing...');
+      await refreshZaloToken();
+      config = await getZaloConfig();
+    }
+
+    // --- Build customer query based on audience_condition ---
+    const condition = subEvent.audience_condition || { type: 'ALL' };
+    const conditionType = condition.type || 'ALL';
+    let customerQuery = { status: { $ne: 'inactive' }, zns_enabled: { $ne: false } };
+
+    console.log(`[Master] Audience condition type: ${conditionType}`);
+
+    switch (conditionType) {
+      case 'ALL':
+        // No extra filter
+        break;
+
+      case 'NOT_PURCHASED_SINCE_EVENT': {
+        // Find the reference event's execute_time
+        const refIndex = condition.since_event_index !== undefined ? condition.since_event_index : (subEventIndex - 1);
+        const subEvents = campaign.sub_events || [];
+        if (refIndex >= 0 && refIndex < subEvents.length) {
+          const refTime = new Date(subEvents[refIndex].execute_time);
+          // Find customers who HAVE orders after the reference event time
+          const ordersAfter = await Order.find({
+            purchase_date: { $gte: refTime }
+          }).select('customer_id');
+          const purchasedIds = [...new Set(ordersAfter.map(o => o.customer_id.toString()))];
+          if (purchasedIds.length > 0) {
+            customerQuery._id = { $nin: purchasedIds };
+            console.log(`[Master] Excluding ${purchasedIds.length} customers who purchased since event ${refIndex}`);
+          }
+        }
+        break;
+      }
+
+      case 'BABY_AGE_RANGE': {
+        const minMonths = condition.baby_age_min || 0;
+        const maxMonths = condition.baby_age_max || 999;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        // baby_dob range: baby born between (today - maxMonths*30 days) and (today - minMonths*30 days)
+        const dobMax = new Date(today);
+        dobMax.setDate(dobMax.getDate() - (minMonths * 30));
+        const dobMin = new Date(today);
+        dobMin.setDate(dobMin.getDate() - (maxMonths * 30));
+        customerQuery.baby_dob = { $gte: dobMin, $lte: dobMax };
+        console.log(`[Master] Filtering babies aged ${minMonths}-${maxMonths} months`);
+        break;
+      }
+
+      case 'NO_ORDER_THIS_MONTH': {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const ordersThisMonth = await Order.find({
+          purchase_date: { $gte: monthStart }
+        }).select('customer_id');
+        const orderedIds = [...new Set(ordersThisMonth.map(o => o.customer_id.toString()))];
+        if (orderedIds.length > 0) {
+          customerQuery._id = { $nin: orderedIds };
+          console.log(`[Master] Excluding ${orderedIds.length} customers with orders this month`);
+        }
+        break;
+      }
+    }
+
+    const customers = await Customer.find(customerQuery);
+    console.log(`[Master] Found ${customers.length} target customers for sub-event [${subEvent.name}]`);
+
+    if (customers.length === 0) return;
+
+    const milestoneKey = `MASTER_SUB_${subEventIndex}`;
+    const templateId = subEvent.zns_template_id;
+
+    // Parse dynamic_data
+    let dynamicDataObj = {};
+    if (subEvent.dynamic_data) {
+      if (subEvent.dynamic_data instanceof Map) {
+        dynamicDataObj = Object.fromEntries(subEvent.dynamic_data);
+      } else if (typeof subEvent.dynamic_data.toJSON === 'function') {
+        dynamicDataObj = subEvent.dynamic_data.toJSON();
+      } else {
+        dynamicDataObj = { ...subEvent.dynamic_data };
+      }
+    }
+
+    for (const customer of customers) {
+      const formattedPhone = formatPhoneNumber(customer.phone);
+      if (!formattedPhone) continue;
+
+      // Anti-Spam Check
+      const existingLog = await ZnsLog.findOne({
+        campaign_id: campaign._id,
+        phoneSent: formattedPhone,
+        status: 'success',
+        milestone_key: milestoneKey
+      });
+
+      if (existingLog) {
+        console.log(`[Skip] Already sent sub-event [${subEvent.name}] to ${formattedPhone}`);
+        continue;
+      }
+
+      // Prepare template data
+      const templateData = {};
+      templateData['customer_name'] = customer.name || 'Quý khách';
+      templateData['phone'] = formattedPhone;
+
+      // Override with custom dynamic data
+      for (const [key, value] of Object.entries(dynamicDataObj)) {
+        const cleanKey = key.trim().replace(/^[<]+|[>]+$/g, '').trim();
+        templateData[cleanKey] = value;
+      }
+
+      if (!templateData.expire) {
+        templateData.expire = '31/12/2099';
+      }
+
+      const payload = {
+        phone: formattedPhone,
+        template_id: templateId,
+        template_data: templateData
+      };
+
+      try {
+        const response = await axios.post('https://business.openapi.zalo.me/message/template', payload, {
+          headers: {
+            'access_token': config.access_token,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const result = response.data;
+
+        if (result.error === 0) {
+          await ZnsLog.create({
+            customerId: customer._id,
+            phoneSent: formattedPhone,
+            status: 'success',
+            znsTemplateId: templateId,
+            zaloMessageId: result.data?.message_id,
+            campaign_id: campaign._id,
+            campaign_type: 'MASTER_CAMPAIGN',
+            milestone_key: milestoneKey,
+            trigger_type: 'CRON_AUTO'
+          });
+          console.log(`[Success] ZNS sent to ${formattedPhone} for sub-event [${subEvent.name}]`);
+        } else {
+          throw new Error(result.message);
+        }
+      } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[Error] Failed ZNS to ${formattedPhone}:`, errorMsg);
+
+        if (errorMsg.includes('Access token invalid') || errorMsg.includes('token') || errorMsg.includes('Invalid Access Token')) {
+          console.log('[Info] Attempting to refresh token dynamically...');
+          await refreshZaloToken();
+          config = await getZaloConfig();
+        }
+
+        await ZnsLog.create({
+          customerId: customer._id,
+          phoneSent: formattedPhone,
+          status: 'failed',
+          znsTemplateId: templateId,
+          errorMessage: errorMsg,
+          campaign_id: campaign._id,
+          campaign_type: 'MASTER_CAMPAIGN',
+          milestone_key: milestoneKey,
+          trigger_type: 'CRON_AUTO'
+        });
+      }
+    }
+
+    console.log(`<<< Finished Master Sub-Event [${subEvent.name}]`);
+  } catch (error) {
+    console.error(`Error executing master sub-event [${subEvent.name}]:`, error);
+  }
+};
+
 // --- MULTI-CRON JOB MANAGEMENT ---
 export const activeCronJobs = new Map();
 
 export const removeCampaignCronJob = (campaignId) => {
   const idStr = campaignId.toString();
+  // Remove regular cron job
   const job = activeCronJobs.get(idStr);
   if (job) {
-    job.stop();
+    if (typeof job.stop === 'function') job.stop();
+    else if (typeof job === 'number' || typeof job === 'object') clearTimeout(job);
     activeCronJobs.delete(idStr);
     console.log(`[Cron] Removed job for campaign ID ${idStr}`);
+  }
+  // Remove all sub-event timers
+  for (const [key, timer] of activeCronJobs.entries()) {
+    if (key.startsWith(`${idStr}_sub_`)) {
+      clearTimeout(timer);
+      activeCronJobs.delete(key);
+      console.log(`[Cron] Removed sub-event timer: ${key}`);
+    }
   }
 };
 
 export const updateCampaignCronJob = (campaign) => {
   const idStr = campaign._id.toString();
   removeCampaignCronJob(idStr);
+
+  if (campaign.status !== 'active') return;
+
+  // --- MASTER_CAMPAIGN: Schedule each sub-event with setTimeout ---
+  if (campaign.type === 'MASTER_CAMPAIGN') {
+    const subEvents = campaign.sub_events || [];
+    const now = new Date();
+    let scheduledCount = 0;
+
+    for (let i = 0; i < subEvents.length; i++) {
+      const sub = subEvents[i];
+      const execTime = new Date(sub.execute_time);
+      const delay = execTime.getTime() - now.getTime();
+
+      if (delay > 0) {
+        const timer = setTimeout(async () => {
+          try {
+            const freshCampaign = await Campaign.findById(idStr);
+            if (freshCampaign && freshCampaign.status === 'active') {
+              await executeMasterSubEvent(freshCampaign, freshCampaign.sub_events[i], i);
+            }
+          } catch (err) {
+            console.error(`[Cron] Error executing master sub-event ${i}:`, err);
+          } finally {
+            activeCronJobs.delete(`${idStr}_sub_${i}`);
+          }
+        }, delay);
+
+        activeCronJobs.set(`${idStr}_sub_${i}`, timer);
+        scheduledCount++;
+        console.log(`[Cron] Scheduled sub-event [${sub.name}] at ${execTime.toLocaleString('vi-VN')} (in ${Math.round(delay / 60000)} minutes)`);
+      } else {
+        console.log(`[Cron] Sub-event [${sub.name}] is in the past (${execTime.toLocaleString('vi-VN')}), skipping.`);
+      }
+    }
+
+    if (scheduledCount > 0) {
+      console.log(`[Cron] Master Campaign [${campaign.name}]: ${scheduledCount}/${subEvents.length} sub-events scheduled.`);
+    }
+    return;
+  }
   
+  // --- Regular campaigns: use recurring cron ---
+  if (!campaign.is_auto_run) return;
+
   // Default to 09:00 AM if no schedule is provided but it's set to auto-run
   const scheduleTime = campaign.recurring_schedule || '0 9 * * *';
 
-  if (campaign.status === 'active' && campaign.is_auto_run) {
-    const job = cron.schedule(scheduleTime, async () => {
-      // Re-fetch to ensure it's still active and within time constraints
-      const dbCamp = await Campaign.findById(idStr);
-      if (!dbCamp || dbCamp.status !== 'active' || !dbCamp.is_auto_run) {
-        removeCampaignCronJob(idStr);
-        return;
-      }
-      
-      const now = new Date();
-      if (dbCamp.start_time && new Date(dbCamp.start_time) > now) return;
-      if (dbCamp.end_time && new Date(dbCamp.end_time) < now) {
-        // If expired, we can optionally stop it
-        removeCampaignCronJob(idStr);
-        return;
-      }
-
-      await executeCampaign(dbCamp);
-    });
+  const job = cron.schedule(scheduleTime, async () => {
+    // Re-fetch to ensure it's still active and within time constraints
+    const dbCamp = await Campaign.findById(idStr);
+    if (!dbCamp || dbCamp.status !== 'active' || !dbCamp.is_auto_run) {
+      removeCampaignCronJob(idStr);
+      return;
+    }
     
-    activeCronJobs.set(idStr, job);
-    console.log(`[Cron] Scheduled job for campaign [${campaign.name}] at ${scheduleTime}`);
-  }
+    const now = new Date();
+    if (dbCamp.start_time && new Date(dbCamp.start_time) > now) return;
+    if (dbCamp.end_time && new Date(dbCamp.end_time) < now) {
+      // If expired, we can optionally stop it
+      removeCampaignCronJob(idStr);
+      return;
+    }
+
+    await executeCampaign(dbCamp);
+  });
+  
+  activeCronJobs.set(idStr, job);
+  console.log(`[Cron] Scheduled job for campaign [${campaign.name}] at ${scheduleTime}`);
 };
 
 export const initCampaignCronJobs = async () => {
   try {
-    const campaigns = await Campaign.find({ status: 'active', is_auto_run: true });
-    campaigns.forEach(updateCampaignCronJob);
-    console.log(`[Cron] Initialized ${activeCronJobs.size} dynamic campaign jobs.`);
+    // Initialize recurring campaigns
+    const recurringCampaigns = await Campaign.find({ status: 'active', is_auto_run: true, type: { $ne: 'MASTER_CAMPAIGN' } });
+    recurringCampaigns.forEach(updateCampaignCronJob);
+
+    // Initialize Master Campaigns (schedule sub-events)
+    const masterCampaigns = await Campaign.find({ status: 'active', type: 'MASTER_CAMPAIGN' });
+    masterCampaigns.forEach(updateCampaignCronJob);
+
+    console.log(`[Cron] Initialized ${activeCronJobs.size} dynamic campaign jobs (including ${masterCampaigns.length} master campaigns).`);
   } catch (error) {
     console.error('Error initializing campaign cron jobs:', error);
   }
@@ -505,3 +806,4 @@ export const scheduleZaloZNS = () => {
 
   console.log('Zalo ZNS Cron Jobs Scheduled: Token Refresh at 08:30 AM, and Dynamic Campaign Jobs.');
 };
+

@@ -38,7 +38,7 @@ export const createProduct = async (req, res) => {
 export const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const updated = await Product.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
+    const updated = await Product.findByIdAndUpdate(id, req.body, { returnDocument: 'after', runValidators: true });
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy sản phẩm' });
     }

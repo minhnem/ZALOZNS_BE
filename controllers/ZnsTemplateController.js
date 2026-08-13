@@ -82,7 +82,7 @@ export const syncTemplates = async (req, res) => {
       await ZnsTemplate.findOneAndUpdate(
         { template_id: String(tpl.templateId) },
         updateData,
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
       syncedCount++;
     }
@@ -174,7 +174,7 @@ export const updateTemplate = async (req, res) => {
     const updated = await ZnsTemplate.findByIdAndUpdate(
       id,
       { template_id, name, type, price, content, status, params: params || [] },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!updated) {

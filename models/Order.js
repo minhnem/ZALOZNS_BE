@@ -44,9 +44,10 @@ orderSchema.post('save', async function (doc) {
     const product = await Product.findById(doc.product_id);
     if (!product || !product.usage_cycle_days) return;
 
-    // Tính ngày dự kiến hết
+    // Tính ngày dự kiến hết (Chu kỳ * Số lượng)
     const refillDate = new Date(doc.purchase_date);
-    refillDate.setDate(refillDate.getDate() + product.usage_cycle_days);
+    const totalDays = product.usage_cycle_days * (doc.quantity || 1);
+    refillDate.setDate(refillDate.getDate() + totalDays);
 
     // Cập nhật vào chính Order này
     await mongoose.model('Order').findByIdAndUpdate(doc._id, {

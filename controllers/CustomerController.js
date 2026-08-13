@@ -4,28 +4,55 @@ import Product from '../models/Product.js';
 
 export const createCustomer = async (req, res) => {
   try {
-    const { phone, product_id, purchase_date } = req.body;
+    const { name, phone, baby_name, baby_dob, edd, is_estimated_dob, status, orders } = req.body;
     
     // 1. Create or Find Customer
     let customer = await Customer.findOne({ phone });
     if (!customer) {
-      customer = new Customer({ phone });
+      customer = new Customer({ name, phone, baby_name, baby_dob, edd, is_estimated_dob, status });
+      await customer.save();
+    } else {
+      customer.name = name || customer.name;
+      customer.baby_name = baby_name || customer.baby_name;
+      customer.baby_dob = baby_dob || customer.baby_dob;
+      customer.edd = edd || customer.edd;
+      if (is_estimated_dob !== undefined) customer.is_estimated_dob = is_estimated_dob;
+      if (status !== undefined) customer.status = status;
       await customer.save();
     }
 
-    // 2. If a product_id is provided, create an Order to trigger the BUYER conversion
-    if (product_id) {
-      const product = await Product.findById(product_id);
-      if (product) {
-        const order = new Order({
-          customer_id: customer._id,
-          product_id: product._id,
-          product_name: product.name,
-          purchase_date: purchase_date ? new Date(purchase_date) : new Date(),
-          quantity: 1,
-          amount: product.price || 0
-        });
-        await order.save(); // The Order post-save hook will update customer_type to BUYER and set next_refill_date
+    // 2. Process multiple orders
+    if (orders && Array.isArray(orders)) {
+      for (const orderData of orders) {
+        if (orderData.product_name) {
+          let product = await Product.findOne({ name: orderData.product_name });
+          if (!product) {
+            product = new Product({
+              name: orderData.product_name,
+              category: 'Khác',
+              usage_cycle_days: 30,
+              status: 'active'
+            });
+            await product.save();
+          }
+
+          const existingOrder = await Order.findOne({ customer_id: customer._id, product_id: product._id });
+          if (existingOrder) {
+            existingOrder.purchase_date = orderData.purchase_date ? new Date(orderData.purchase_date) : new Date();
+            existingOrder.quantity = orderData.quantity || 1;
+            await existingOrder.save();
+          } else {
+            const newOrder = new Order({
+              customer_id: customer._id,
+              product_id: product._id,
+              product_name: product.name,
+              purchase_date: orderData.purchase_date ? new Date(orderData.purchase_date) : new Date(),
+              quantity: orderData.quantity || 1,
+              amount: product.price || 0
+            });
+            await newOrder.save();
+          }
+        }
       }
     }
 
@@ -56,17 +83,26 @@ export const getCustomers = async (req, res) => {
     customers = customers.map(customer => {
       const customerOrders = orders.filter(o => o.customer_id.toString() === customer._id.toString());
       
-      // Group by product_id to only show the latest order per product, or just show all active ones. 
-      // Tạm thời hiển thị tất cả các tracking orders có expected_refill_date
-      const purchased_products = customerOrders
+      // Group by product_name to only show the latest order per product name (handles duplicate product IDs with same name)
+      const productMap = new Map();
+      customerOrders
         .filter(o => o.expected_refill_date)
-        .map(o => ({
-           product_name: o.product_name,
-           expected_refill_date: o.expected_refill_date
-        }));
+        .forEach(o => {
+           const key = o.product_name ? o.product_name.trim().toLowerCase() : 'unknown';
+           const existing = productMap.get(key);
+           if (!existing || new Date(o.expected_refill_date) > new Date(existing.expected_refill_date)) {
+               productMap.set(key, o);
+           }
+        });
+
+      const purchased_products = Array.from(productMap.values()).map(o => ({
+         product_name: o.product_name,
+         expected_refill_date: o.expected_refill_date
+      }));
 
       return {
         ...customer,
+        orders: customerOrders,
         purchased_products
       };
     });
@@ -81,30 +117,49 @@ export const getCustomers = async (req, res) => {
 export const updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, phone, baby_name, baby_dob, edd, is_estimated_dob, status, product_id, purchase_date } = req.body;
+    const { name, phone, baby_name, baby_dob, edd, is_estimated_dob, status, orders } = req.body;
 
     const updatedCustomer = await Customer.findByIdAndUpdate(
       id,
       { name, phone, baby_name, baby_dob, edd, is_estimated_dob, status },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!updatedCustomer) {
       return res.status(404).json({ message: 'Customer not found' });
     }
 
-    if (product_id) {
-      const product = await Product.findById(product_id);
-      if (product) {
-        const order = new Order({
-          customer_id: updatedCustomer._id,
-          product_id: product._id,
-          product_name: product.name,
-          purchase_date: purchase_date ? new Date(purchase_date) : new Date(),
-          quantity: 1,
-          amount: product.price || 0
-        });
-        await order.save();
+    if (orders && Array.isArray(orders)) {
+      for (const orderData of orders) {
+        if (orderData.product_name) {
+          let product = await Product.findOne({ name: orderData.product_name });
+          if (!product) {
+            product = new Product({
+              name: orderData.product_name,
+              category: 'Khác',
+              usage_cycle_days: 30,
+              status: 'active'
+            });
+            await product.save();
+          }
+
+          const existingOrder = await Order.findOne({ customer_id: updatedCustomer._id, product_id: product._id });
+          if (existingOrder) {
+            existingOrder.purchase_date = orderData.purchase_date ? new Date(orderData.purchase_date) : new Date();
+            existingOrder.quantity = orderData.quantity || 1;
+            await existingOrder.save();
+          } else {
+            const newOrder = new Order({
+              customer_id: updatedCustomer._id,
+              product_id: product._id,
+              product_name: product.name,
+              purchase_date: orderData.purchase_date ? new Date(orderData.purchase_date) : new Date(),
+              quantity: orderData.quantity || 1,
+              amount: product.price || 0
+            });
+            await newOrder.save();
+          }
+        }
       }
     }
 
