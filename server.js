@@ -11,6 +11,9 @@ import orderRoutes from "./routes/orderRoutes.js";
 import campaignRoutes from "./routes/campaignRoutes.js";
 import znsTemplateRoutes from "./routes/znsTemplateRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
+import roleRoutes from "./routes/roleRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
+import activityLogRoutes from "./routes/activityLogRoutes.js";
 import { scheduleZaloZNS } from "./services/zaloZnsService.js";
 
 dotenv.config();
@@ -31,6 +34,9 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/campaigns", campaignRoutes);
 app.use("/api/zns-templates", znsTemplateRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/roles", roleRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/activity-logs", activityLogRoutes);
 
 // Base route for health check
 app.get("/", (req, res) => {

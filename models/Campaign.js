@@ -88,6 +88,14 @@ const campaignSchema = new mongoose.Schema({
     type: Map,
     of: String,
     default: {}
+  },
+  created_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  updated_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
 }, { timestamps: true });
 

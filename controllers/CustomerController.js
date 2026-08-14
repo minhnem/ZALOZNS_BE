@@ -2,6 +2,7 @@ import Customer from '../models/Customer.js';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import xlsx from 'xlsx';
+import { logActivity } from '../utils/auditLog.js';
 
 function formatPhoneNumber(phone) {
   if (!phone) return null;
@@ -83,9 +84,12 @@ export const importCustomersExcel = async (req, res) => {
           phone,
           edd,
           baby_dob,
-          status: 'active'
+          status: 'active',
+          created_by: req.user?._id,
+          updated_by: req.user?._id
         });
         await customer.save();
+        await logActivity(req.user?._id, 'CREATE', 'Customer', customer._id, `Tạo khách hàng qua import Excel`);
         newCustomersCount++;
       } else {
         // Update info if provided and not null
@@ -115,10 +119,13 @@ export const importCustomersExcel = async (req, res) => {
         product_name: product.name,
         purchase_date: purchase_date,
         quantity: quantity,
-        amount: product.price || 0
+        amount: product.price || 0,
+        created_by: req.user?._id,
+        updated_by: req.user?._id
       });
       
       await newOrder.save();
+      await logActivity(req.user?._id, 'CREATE', 'Order', newOrder._id, `Tạo đơn hàng qua import Excel`);
       newOrdersCount++;
       successCount++;
     }
@@ -145,8 +152,9 @@ export const createCustomer = async (req, res) => {
     // 1. Create or Find Customer
     let customer = await Customer.findOne({ phone });
     if (!customer) {
-      customer = new Customer({ name, phone, baby_name, baby_dob, edd, is_estimated_dob, status });
+      customer = new Customer({ name, phone, baby_name, baby_dob, edd, is_estimated_dob, status, created_by: req.user?._id, updated_by: req.user?._id });
       await customer.save();
+      await logActivity(req.user?._id, 'CREATE', 'Customer', customer._id, `Tạo khách hàng mới`);
     } else {
       customer.name = name || customer.name;
       customer.baby_name = baby_name || customer.baby_name;
@@ -154,7 +162,9 @@ export const createCustomer = async (req, res) => {
       customer.edd = edd || customer.edd;
       if (is_estimated_dob !== undefined) customer.is_estimated_dob = is_estimated_dob;
       if (status !== undefined) customer.status = status;
+      customer.updated_by = req.user?._id;
       await customer.save();
+      await logActivity(req.user?._id, 'UPDATE', 'Customer', customer._id, `Cập nhật khách hàng khi thêm đơn`);
     }
 
     // 2. Process multiple orders
@@ -176,7 +186,9 @@ export const createCustomer = async (req, res) => {
           if (existingOrder) {
             existingOrder.purchase_date = orderData.purchase_date ? new Date(orderData.purchase_date) : new Date();
             existingOrder.quantity = orderData.quantity || 1;
+            existingOrder.updated_by = req.user?._id;
             await existingOrder.save();
+            await logActivity(req.user?._id, 'UPDATE', 'Order', existingOrder._id, `Cập nhật đơn hàng`);
           } else {
             const newOrder = new Order({
               customer_id: customer._id,
@@ -184,9 +196,12 @@ export const createCustomer = async (req, res) => {
               product_name: product.name,
               purchase_date: orderData.purchase_date ? new Date(orderData.purchase_date) : new Date(),
               quantity: orderData.quantity || 1,
-              amount: product.price || 0
+              amount: product.price || 0,
+              created_by: req.user?._id,
+              updated_by: req.user?._id
             });
             await newOrder.save();
+            await logActivity(req.user?._id, 'CREATE', 'Order', newOrder._id, `Tạo đơn hàng mới`);
           }
         }
       }
@@ -207,7 +222,11 @@ export const getCustomers = async (req, res) => {
     }
     
     // Tìm khách hàng
-    let customers = await Customer.find(filter).sort({ createdAt: -1 }).lean();
+    let customers = await Customer.find(filter)
+      .sort({ createdAt: -1 })
+      .populate('created_by', 'fullName')
+      .populate('updated_by', 'fullName')
+      .lean();
     
     // Lấy ID của tất cả khách hàng
     const customerIds = customers.map(c => c._id);
@@ -257,13 +276,15 @@ export const updateCustomer = async (req, res) => {
 
     const updatedCustomer = await Customer.findByIdAndUpdate(
       id,
-      { name, phone, baby_name, baby_dob, edd, is_estimated_dob, status },
+      { name, phone, baby_name, baby_dob, edd, is_estimated_dob, status, updated_by: req.user?._id },
       { returnDocument: 'after' }
     );
 
     if (!updatedCustomer) {
       return res.status(404).json({ message: 'Customer not found' });
     }
+
+    await logActivity(req.user?._id, 'UPDATE', 'Customer', updatedCustomer._id, `Cập nhật khách hàng`);
 
     if (orders && Array.isArray(orders)) {
       for (const orderData of orders) {
@@ -314,6 +335,8 @@ export const deleteCustomer = async (req, res) => {
     if (!deletedCustomer) {
       return res.status(404).json({ message: 'Customer not found' });
     }
+
+    await logActivity(req.user?._id, 'DELETE', 'Customer', id, `Xóa khách hàng`);
 
     res.status(200).json({ message: 'Customer deleted successfully' });
   } catch (error) {

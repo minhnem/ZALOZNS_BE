@@ -1,6 +1,7 @@
 import ZnsTemplate from '../models/ZnsTemplate.js';
 import ZaloOAConfig from '../models/ZaloOAConfig.js';
 import axios from 'axios';
+import { logActivity } from '../utils/auditLog.js';
 
 // 1. Sync Templates from Zalo OA API
 export const syncTemplates = async (req, res) => {
@@ -77,15 +78,25 @@ export const syncTemplates = async (req, res) => {
       // Only set params if template is new (preserve admin config on existing)
       if (!existing) {
         updateData.params = params;
+        updateData.created_by = req.user?._id;
       }
+      updateData.updated_by = req.user?._id;
 
-      await ZnsTemplate.findOneAndUpdate(
+      const updatedTpl = await ZnsTemplate.findOneAndUpdate(
         { template_id: String(tpl.templateId) },
         updateData,
         { upsert: true, returnDocument: 'after' }
       );
+      
+      if (!existing) {
+        await logActivity(req.user?._id, 'CREATE', 'ZnsTemplate', updatedTpl._id, `Đồng bộ: Tạo template mới`);
+      } else {
+        await logActivity(req.user?._id, 'UPDATE', 'ZnsTemplate', updatedTpl._id, `Đồng bộ: Cập nhật template`);
+      }
       syncedCount++;
     }
+
+    await logActivity(req.user?._id, 'SYNC', 'ZnsTemplate', null, `Đồng bộ thành công ${syncedCount} template từ Zalo`);
 
     res.status(200).json({ 
       message: `Đồng bộ thành công ${syncedCount} template từ Zalo OA!`, 
@@ -114,7 +125,10 @@ export const getTemplates = async (req, res) => {
       ];
     }
 
-    const templates = await ZnsTemplate.find(filter).sort({ updatedAt: -1 });
+    const templates = await ZnsTemplate.find(filter)
+      .sort({ updatedAt: -1 })
+      .populate('created_by', 'fullName')
+      .populate('updated_by', 'fullName');
     res.status(200).json(templates);
   } catch (error) {
     console.error('Error fetching templates:', error);
@@ -154,10 +168,13 @@ export const createTemplate = async (req, res) => {
       price: price || 0,
       content: content || '',
       status: status || 'PENDING',
-      params: params || []
+      params: params || [],
+      created_by: req.user?._id,
+      updated_by: req.user?._id
     });
 
     await template.save();
+    await logActivity(req.user?._id, 'CREATE', 'ZnsTemplate', template._id, `Tạo thủ công template ZNS`);
     res.status(201).json({ message: 'Thêm template thành công!', template });
   } catch (error) {
     console.error('Error creating template:', error);
@@ -173,13 +190,15 @@ export const updateTemplate = async (req, res) => {
 
     const updated = await ZnsTemplate.findByIdAndUpdate(
       id,
-      { template_id, name, type, price, content, status, params: params || [] },
+      { template_id, name, type, price, content, status, params: params || [], updated_by: req.user?._id },
       { returnDocument: 'after' }
     );
 
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy template' });
     }
+
+    await logActivity(req.user?._id, 'UPDATE', 'ZnsTemplate', updated._id, `Cập nhật thông tin template ZNS`);
 
     res.status(200).json({ message: 'Cập nhật template thành công!', template: updated });
   } catch (error) {
@@ -197,6 +216,8 @@ export const deleteTemplate = async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ message: 'Không tìm thấy template' });
     }
+
+    await logActivity(req.user?._id, 'DELETE', 'ZnsTemplate', id, `Xóa template ZNS`);
 
     res.status(200).json({ message: 'Xóa template thành công!' });
   } catch (error) {

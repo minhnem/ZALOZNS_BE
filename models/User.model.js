@@ -21,6 +21,10 @@ const userSchema = new mongoose.Schema({
   avatar: {
     type: String,
     default: ''
+  },
+  role_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Role'
   }
 }, { timestamps: true });
 

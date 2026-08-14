@@ -62,7 +62,7 @@ export const login = async (req, res) => {
       return res.status(400).json({ message: 'Vui lòng cung cấp email và mật khẩu.' });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).populate('role_id');
     if (!user) {
       return res.status(401).json({ message: 'Email hoặc mật khẩu không chính xác.' });
     }
@@ -85,7 +85,9 @@ export const login = async (req, res) => {
         id: user._id,
         fullName: user.fullName,
         email: user.email,
-        avatar: user.avatar
+        avatar: user.avatar,
+        role: user.role_id ? user.role_id.name : null,
+        permissions: user.role_id ? user.role_id.permissions : []
       },
       token
     });
@@ -129,7 +131,24 @@ export const updateProfile = async (req, res) => {
     });
   } catch (error) {
     console.error('Lỗi API Cập nhật hồ sơ:', error);
-    res.status(500).json({ message: 'Lỗi máy chủ nội bộ. Vui lòng thử lại.' });
+  }
+};
+
+export const getMe = async (req, res) => {
+  try {
+    const user = req.user; // Trích xuất từ middleware requireAuth
+    res.status(200).json({
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        avatar: user.avatar,
+        role: user.role_id ? user.role_id.name : null,
+        permissions: user.role_id ? user.role_id.permissions : []
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi máy chủ nội bộ' });
   }
 };
 

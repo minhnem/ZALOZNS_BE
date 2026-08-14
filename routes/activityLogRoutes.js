@@ -1,11 +1,11 @@
 import express from 'express';
-import { getDashboardStats } from '../controllers/DashboardController.js';
+import { getLogs } from '../controllers/ActivityLogController.js';
 import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
 router.use(requireAuth);
 
-router.get('/stats', requirePermission('dashboard_view'), getDashboardStats);
+router.get('/', requirePermission('system_view'), getLogs);
 
 export default router;

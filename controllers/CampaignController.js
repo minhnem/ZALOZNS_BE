@@ -1,6 +1,8 @@
 import Campaign from '../models/Campaign.js';
 import Product from '../models/Product.js';
 import Order from '../models/Order.js';
+import AuditLog from '../models/AuditLog.js';
+import { logActivity } from '../utils/auditLog.js';
 import { executeCampaign, executeMasterSubEvent, updateCampaignCronJob, removeCampaignCronJob } from '../services/zaloZnsService.js';
 
 const syncProductCyclesAndOrders = async (milestones) => {
@@ -48,9 +50,14 @@ export const getCampaigns = async (req, res) => {
     if (status) filter.status = status;
     if (is_auto_run !== undefined) filter.is_auto_run = is_auto_run === 'true';
 
+    // The user's right to view campaigns is already validated by requirePermission('campaign_view')
+    // All users with this permission can view all campaigns.
+
     const campaigns = await Campaign.find(filter)
       .populate('product_id', 'name category usage_cycle_days')
       .populate('milestones.product_id', 'name category usage_cycle_days')
+      .populate('created_by', 'fullName avatar')
+      .populate('updated_by', 'fullName avatar')
       .sort({ createdAt: -1 });
     res.status(200).json(campaigns);
   } catch (error) {
@@ -79,8 +86,15 @@ export const createCampaign = async (req, res) => {
     if (req.body.type === 'PRODUCT_REFILL' && req.body.milestones) {
       await syncProductCyclesAndOrders(req.body.milestones);
     }
+    
+    if (req.user) {
+      req.body.created_by = req.user._id;
+      req.body.updated_by = req.user._id;
+    }
+
     const campaign = new Campaign(req.body);
     const saved = await campaign.save();
+    await logActivity(req.user?._id, 'CREATE', 'Campaign', saved._id, `Tạo chiến dịch`);
     updateCampaignCronJob(saved);
     res.status(201).json(saved);
   } catch (error) {
@@ -92,13 +106,27 @@ export const createCampaign = async (req, res) => {
 export const updateCampaign = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    const existingCampaign = await Campaign.findById(id);
+    if (!existingCampaign) {
+      return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
+    }
+    // The user's right to edit is already validated by requirePermission('campaign_edit')
+    // so we don't need to restrict editing to only the creator.
+
     if (req.body.type === 'PRODUCT_REFILL' && req.body.milestones) {
       await syncProductCyclesAndOrders(req.body.milestones);
     }
+    
+    if (req.user) {
+      req.body.updated_by = req.user._id;
+    }
+
     const updated = await Campaign.findByIdAndUpdate(id, req.body, { returnDocument: 'after', runValidators: true });
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
+    await logActivity(req.user?._id, 'UPDATE', 'Campaign', updated._id, `Cập nhật chiến dịch`);
     updateCampaignCronJob(updated);
     res.status(200).json(updated);
   } catch (error) {
@@ -110,10 +138,20 @@ export const updateCampaign = async (req, res) => {
 export const deleteCampaign = async (req, res) => {
   try {
     const { id } = req.params;
-    const deleted = await Campaign.findByIdAndDelete(id);
-    if (!deleted) {
+    
+    const existingCampaign = await Campaign.findById(id);
+    if (!existingCampaign) {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
+    // The user's right to delete is already validated by requirePermission('campaign_delete')
+    // so we don't need to restrict deletion to only the creator.
+
+    await Campaign.findByIdAndDelete(id);
+    
+    if (req.user) {
+      await logActivity(req.user._id, 'DELETE', 'Campaign', id, `Xóa chiến dịch: ${existingCampaign.name}`);
+    }
+
     removeCampaignCronJob(id);
     res.status(200).json({ message: 'Đã xóa chiến dịch thành công' });
   } catch (error) {

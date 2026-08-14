@@ -20,7 +20,11 @@ const customerSchema = new mongoose.Schema({
   last_purchased_product: { type: String },
   
   // ZNS Config
-  zns_enabled: { type: Boolean, default: true }
+  zns_enabled: { type: Boolean, default: true },
+  
+  // Tracking
+  created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  updated_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
 export default mongoose.model('Customer', customerSchema);

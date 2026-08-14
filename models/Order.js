@@ -32,7 +32,9 @@ const orderSchema = new mongoose.Schema({
   expected_refill_date: { 
     type: Date,
     index: true // Thêm index để truy vấn Cronjob nhanh hơn
-  }
+  },
+  created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  updated_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
 // Mongoose Hook: Sau khi tạo Order, tính expected_refill_date và cập nhật Customer type
