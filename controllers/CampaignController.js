@@ -94,7 +94,7 @@ export const createCampaign = async (req, res) => {
 
     const campaign = new Campaign(req.body);
     const saved = await campaign.save();
-    await logActivity(req.user?._id, 'CREATE', 'Campaign', saved._id, `Tạo chiến dịch`);
+    await logActivity(req.user?._id, 'CREATE', 'Campaign', saved._id, `Tạo chiến dịch: ${saved.name}`);
     updateCampaignCronJob(saved);
     res.status(201).json(saved);
   } catch (error) {
@@ -126,7 +126,7 @@ export const updateCampaign = async (req, res) => {
     if (!updated) {
       return res.status(404).json({ message: 'Không tìm thấy chiến dịch' });
     }
-    await logActivity(req.user?._id, 'UPDATE', 'Campaign', updated._id, `Cập nhật chiến dịch`);
+    await logActivity(req.user?._id, 'UPDATE', 'Campaign', updated._id, `Cập nhật chiến dịch: ${updated.name}`);
     updateCampaignCronJob(updated);
     res.status(200).json(updated);
   } catch (error) {

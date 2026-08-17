@@ -89,9 +89,9 @@ export const syncTemplates = async (req, res) => {
       );
       
       if (!existing) {
-        await logActivity(req.user?._id, 'CREATE', 'ZnsTemplate', updatedTpl._id, `Đồng bộ: Tạo template mới`);
+        await logActivity(req.user?._id, 'CREATE', 'ZnsTemplate', updatedTpl._id, `Đồng bộ từ Zalo: Tạo template mới [${tpl.templateName}]`);
       } else {
-        await logActivity(req.user?._id, 'UPDATE', 'ZnsTemplate', updatedTpl._id, `Đồng bộ: Cập nhật template`);
+        await logActivity(req.user?._id, 'UPDATE', 'ZnsTemplate', updatedTpl._id, `Đồng bộ từ Zalo: Cập nhật template [${tpl.templateName}]`);
       }
       syncedCount++;
     }
@@ -174,7 +174,7 @@ export const createTemplate = async (req, res) => {
     });
 
     await template.save();
-    await logActivity(req.user?._id, 'CREATE', 'ZnsTemplate', template._id, `Tạo thủ công template ZNS`);
+    await logActivity(req.user?._id, 'CREATE', 'ZnsTemplate', template._id, `Tạo thủ công template ZNS: ${template.name}`);
     res.status(201).json({ message: 'Thêm template thành công!', template });
   } catch (error) {
     console.error('Error creating template:', error);
@@ -198,7 +198,7 @@ export const updateTemplate = async (req, res) => {
       return res.status(404).json({ message: 'Không tìm thấy template' });
     }
 
-    await logActivity(req.user?._id, 'UPDATE', 'ZnsTemplate', updated._id, `Cập nhật thông tin template ZNS`);
+    await logActivity(req.user?._id, 'UPDATE', 'ZnsTemplate', updated._id, `Cập nhật template ZNS: ${updated.name}`);
 
     res.status(200).json({ message: 'Cập nhật template thành công!', template: updated });
   } catch (error) {
@@ -217,7 +217,7 @@ export const deleteTemplate = async (req, res) => {
       return res.status(404).json({ message: 'Không tìm thấy template' });
     }
 
-    await logActivity(req.user?._id, 'DELETE', 'ZnsTemplate', id, `Xóa template ZNS`);
+    await logActivity(req.user?._id, 'DELETE', 'ZnsTemplate', id, `Xóa template ZNS: ${deleted.name}`);
 
     res.status(200).json({ message: 'Xóa template thành công!' });
   } catch (error) {
