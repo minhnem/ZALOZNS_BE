@@ -152,3 +152,35 @@ export const getMe = async (req, res) => {
   }
 };
 
+export const changePassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { oldPassword, newPassword } = req.body;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'Người dùng không tồn tại.' });
+    }
+
+    const isMatch = await bcrypt.compare(oldPassword, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Mật khẩu hiện tại không chính xác.' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ message: 'Mật khẩu mới phải có ít nhất 8 ký tự.' });
+    }
+
+    const saltRounds = 10;
+    const password_hash = await bcrypt.hash(newPassword, saltRounds);
+
+    user.password_hash = password_hash;
+    await user.save();
+
+    res.status(200).json({ message: 'Đổi mật khẩu thành công!' });
+  } catch (error) {
+    console.error('Lỗi API Đổi mật khẩu:', error);
+    res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
+  }
+};
+
