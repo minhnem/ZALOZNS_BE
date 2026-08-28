@@ -13,6 +13,7 @@ const customerSchema = new mongoose.Schema({
   is_estimated_dob: { type: Boolean, default: false },
   status: { type: String, enum: ['active', 'inactive'], default: 'active' },
   source: { type: String, default: 'MANUAL_ENTRY' },
+  kiotviet_id: { type: String, sparse: true },
   customer_type: { type: String, enum: ['LEAD', 'BUYER'], default: 'LEAD' },
 
   // Trường cũ (Deprecated) — Chuyển sang lấy dữ liệu từ Order

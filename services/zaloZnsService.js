@@ -380,6 +380,21 @@ export const executeCampaign = async (campaign) => {
           milestone_key: milestoneKey
         });
       } else if (campaignType === 'PRODUCT_REFILL') {
+        // --- KIỂM TRA ĐƠN HÀNG MỚI HƠN ---
+        // Tránh tình trạng: Mua ngày 1/1 (hết hạn 31/1), mua tiếp 15/1 (hết hạn 14/2). Đến 31/1 không được nhắn vì đã mua hôm 15/1.
+        if (product_id && refill_date) {
+           const newerOrder = await Order.findOne({
+             customer_id: customer._id,
+             product_id: product_id,
+             expected_refill_date: { $gt: refill_date }
+           });
+           
+           if (newerOrder) {
+             console.log(`[Skip] Bỏ qua gửi ZNS cho ${formattedPhone} vì khách đã mua lại sản phẩm này gần đây. Sẽ nhắc vào ${newerOrder.expected_refill_date}`);
+             continue; // Bỏ qua lần lặp này
+           }
+        }
+
         // Chỉ block nếu đúng loại sản phẩm này đã được gửi nhắc nhở gần đây
         const spamThreshold = new Date();
         spamThreshold.setDate(spamThreshold.getDate() - 15);

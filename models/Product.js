@@ -21,6 +21,12 @@ const productSchema = new mongoose.Schema({
     type: String, 
     enum: ['active', 'inactive'], 
     default: 'active' 
+  },
+  kiotviet_code: {
+    type: String,
+    unique: true,
+    sparse: true, // Allow multiple products to not have this code
+    trim: true
   }
 }, { timestamps: true });
 
