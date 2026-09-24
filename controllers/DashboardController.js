@@ -46,24 +46,23 @@ export const getDashboardStats = async (req, res) => {
     // 1. Total Customer Profiles
     const totalCustomers = await Customer.countDocuments({ status: { $ne: 'inactive' } });
 
-    // 2. New Registrations This Month
+    // 2. Khách hàng mới (Tháng này) - Khách có đơn hàng trong tháng
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
-    const newRegistrations = await Customer.countDocuments({
-      createdAt: { $gte: startOfMonth },
-      status: { $ne: 'inactive' }
+    const uniqueCustomersWithOrders = await Order.distinct('customer_id', {
+      purchase_date: { $gte: startOfMonth }
     });
+    const newRegistrations = uniqueCustomersWithOrders.length;
 
-    // 3. Active Lifecycle Segments (active campaigns count)
-    const activeSegments = await Campaign.countDocuments({ status: 'active' });
+    // 3. Total Campaigns (tổng số chiến dịch)
+    const totalCampaigns = await Campaign.countDocuments();
 
-    // 4. Revenue (MTD) — sum of Order.amount this month
-    const revenueResult = await Order.aggregate([
-      { $match: { purchase_date: { $gte: startOfMonth } } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-    const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;
+    // 4. Tin nhắn ZNS đã gửi (Tháng này)
+    const totalZnsSent = await ZnsLog.countDocuments({
+      sentAt: { $gte: startOfMonth },
+      status: 'success'
+    });
 
     // 5. Customer segments breakdown
     const allCustomers = await Customer.find({ status: { $ne: 'inactive' } }).lean();
@@ -81,15 +80,14 @@ export const getDashboardStats = async (req, res) => {
       segmentCounts[seg] = (segmentCounts[seg] || 0) + 1;
     }
 
-    // 6. Monthly segmentation chart data (last 12 months)
+    // 6. Monthly segmentation chart data (current year: Jan - Dec)
     const monthlySegmentation = [];
     const monthNames = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12'];
+    const currentYear = new Date().getFullYear();
     
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - i);
-      const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);
-      const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    for (let i = 0; i < 12; i++) {
+      const monthStart = new Date(currentYear, i, 1);
+      const monthEnd = new Date(currentYear, i + 1, 0, 23, 59, 59, 999);
 
       const monthCustomers = allCustomers.filter(c => {
         const created = new Date(c.createdAt);
@@ -97,7 +95,7 @@ export const getDashboardStats = async (req, res) => {
       });
 
       const monthData = {
-        month: monthNames[monthStart.getMonth()],
+        month: monthNames[i],
         pregnancy: 0,
         newborn: 0,
         infant: 0,
@@ -178,37 +176,55 @@ export const getDashboardStats = async (req, res) => {
     // 10. Alerts
     const alerts = [];
     
-    // Check for refill alerts
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    const refillOrdersToday = await Order.countDocuments({
-      expected_refill_date: { $gte: today, $lt: tomorrow }
+
+    // 10.1 Refill alert (Sắp hết hàng trong 7 ngày tới)
+    const next7Days = new Date(today);
+    next7Days.setDate(next7Days.getDate() + 7);
+    const refillOrdersCount = await Order.countDocuments({
+      expected_refill_date: { $gte: today, $lte: next7Days }
     });
-    if (refillOrdersToday > 0) {
+    if (refillOrdersCount > 0) {
       alerts.push({
         type: 'warning',
-        message: `${refillOrdersToday} đơn hàng sắp hết hàng hôm nay. Cần gửi nhắc mua lại.`
+        message: `Có ${refillOrdersCount} khách hàng sắp dùng hết sản phẩm trong 7 ngày tới. Đừng quên thiết lập chiến dịch nhắc mua lại (Refill)!`
       });
     }
 
-    // Check for segments without campaigns
-    const lifecycleCampaigns = await Campaign.countDocuments({ type: 'LIFECYCLE', status: 'active' });
-    if (lifecycleCampaigns === 0) {
+    // 10.2 ZNS Failed Today
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const failedZnsCount = await ZnsLog.countDocuments({
+      sentAt: { $gte: today, $lt: tomorrow },
+      status: 'failed'
+    });
+    if (failedZnsCount > 0) {
       alerts.push({
-        type: 'info',
-        message: 'Gợi ý: Liên hệ khách hàng Segment "Toddler" cho đồ chơi giáo dục'
+        type: 'error',
+        message: `Hôm nay có ${failedZnsCount} tin nhắn ZNS gửi thất bại. Vui lòng kiểm tra lại Zalo OA hoặc mẫu tin nhắn.`
       });
     }
 
-    // Segment insights
-    const newbornCount = segmentCounts.NEWBORN || 0;
-    if (newbornCount > 0) {
+    // 10.3 Expecting Mothers (Dự sinh trong 14 ngày tới)
+    const next14Days = new Date(today);
+    next14Days.setDate(next14Days.getDate() + 14);
+    const expectingMothersCount = await Customer.countDocuments({
+      edd: { $gte: today, $lte: next14Days },
+      status: { $ne: 'inactive' }
+    });
+    if (expectingMothersCount > 0) {
       alerts.push({
         type: 'info',
-        message: `Phân tích: ${Math.round((newbornCount / totalCustomers) * 100)}% bé 6 tháng chưa nhận hướng dẫn ăn dặm`
+        message: `Có ${expectingMothersCount} mẹ bầu dự sinh trong vòng 2 tuần tới. Hãy sẵn sàng gửi ZNS chúc mừng và bán chéo đồ sơ sinh!`
+      });
+    }
+
+    // 10.4 Generic positive alert if all clear
+    if (alerts.length === 0) {
+      alerts.push({
+        type: 'success',
+        message: 'Hệ thống đang hoạt động trơn tru. Không có cảnh báo hay rủi ro nào hôm nay.'
       });
     }
 
@@ -216,8 +232,8 @@ export const getDashboardStats = async (req, res) => {
       keyMetrics: {
         totalCustomers,
         newRegistrations,
-        activeSegments,
-        totalRevenue
+        totalCampaigns,
+        totalZnsSent
       },
       segmentCounts,
       monthlySegmentation,

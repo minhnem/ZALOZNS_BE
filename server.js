@@ -15,6 +15,7 @@ import roleRoutes from "./routes/roleRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import activityLogRoutes from "./routes/activityLogRoutes.js";
 import kiotvietRoutes from "./routes/kiotvietRoutes.js";
+import reportRoutes from "./routes/reportRoutes.js";
 import { scheduleZaloZNS } from "./services/zaloZnsService.js";
 
 dotenv.config();
@@ -39,6 +40,7 @@ app.use("/api/roles", roleRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/activity-logs", activityLogRoutes);
 app.use("/api/kiotviet", kiotvietRoutes);
+app.use("/api/reports", reportRoutes);
 
 // Base route for health check
 app.get("/", (req, res) => {
