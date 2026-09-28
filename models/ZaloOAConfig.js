@@ -4,8 +4,7 @@ import { tenantPlugin } from '../utils/tenantPlugin.js';
 const zaloOAConfigSchema = new mongoose.Schema({
   oa_id: { 
     type: String, 
-    required: true, 
-    unique: true 
+    required: true
   },
   oa_name: { type: String, required: true },
   app_id: { type: String },

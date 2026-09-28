@@ -152,7 +152,7 @@ export const updateTenantPlan = async (req, res) => {
     const { id } = req.params;
     const { plan } = req.body;
     
-    if (!['free', 'basic', 'pro', 'enterprise'].includes(plan)) {
+    if (!['free', 'basic', 'pro'].includes(plan)) {
       return res.status(400).json({ message: 'Gói cước không hợp lệ' });
     }
 

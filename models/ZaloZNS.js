@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const zaloZNSSchema = new mongoose.Schema({
-  oaId: { type: String, required: true, unique: true },
+  oaId: { type: String, required: true },
   oaName: { type: String, required: true },
   appId: { type: String }, 
   secretKey: { type: String }, 

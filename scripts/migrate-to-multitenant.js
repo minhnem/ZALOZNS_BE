@@ -40,7 +40,7 @@ const migrate = async () => {
         defaultTenant = new Tenant({
           name: 'Shop Mặc Định (Hệ thống cũ)',
           status: 'active',
-          plan: 'enterprise', // Gắn gói cao nhất cho khách hàng cũ
+          plan: 'pro', // Gắn gói cao nhất cho khách hàng cũ
         });
         await defaultTenant.save();
         console.log(`✅ Đã tạo Tenant mặc định: ${defaultTenant._id}`);

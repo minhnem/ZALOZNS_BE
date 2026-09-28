@@ -8,9 +8,8 @@ import Tenant from '../models/Tenant.js';
 
 const planFeatures = {
   free: ['PRODUCT_REFILL'],
-  basic: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO'],
-  pro: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO', 'LIFECYCLE', 'MASTER_CAMPAIGN'],
-  enterprise: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO', 'LIFECYCLE', 'MASTER_CAMPAIGN']
+  basic: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO', 'LIFECYCLE', 'ENCOURAGE_PURCHASE'],
+  pro: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO', 'LIFECYCLE', 'MASTER_CAMPAIGN', 'ENCOURAGE_PURCHASE']
 };
 
 const syncProductCyclesAndOrders = async (milestones) => {
