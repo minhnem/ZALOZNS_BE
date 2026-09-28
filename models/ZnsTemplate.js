@@ -1,10 +1,10 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const znsTemplateSchema = new mongoose.Schema({
   template_id: { 
     type: String, 
-    required: true, 
-    unique: true 
+    required: true
   },
   name: { 
     type: String, 
@@ -39,5 +39,11 @@ const znsTemplateSchema = new mongoose.Schema({
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   updated_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
+
+// Multi-tenant: template_id unique trong phạm vi từng shop
+znsTemplateSchema.index({ tenant_id: 1, template_id: 1 }, { unique: true });
+
+// Đăng ký Tenant Plugin
+znsTemplateSchema.plugin(tenantPlugin);
 
 export default mongoose.model('ZnsTemplate', znsTemplateSchema);

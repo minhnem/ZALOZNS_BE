@@ -1,10 +1,10 @@
 import express from 'express';
 import { getCampaigns, getCampaignById, createCampaign, updateCampaign, deleteCampaign, triggerManualCampaign } from '../controllers/CampaignController.js';
-import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
+import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.use(requireAuth);
+// requireAuth + tenantMiddleware đã mount global trong server.js
 
 router.get('/', requirePermission('campaign_view'), getCampaigns);
 router.get('/:id', requirePermission('campaign_view'), getCampaignById);

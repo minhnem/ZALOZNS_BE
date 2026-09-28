@@ -6,11 +6,11 @@ import {
   editMilestone, 
   deleteMilestone 
 } from '../controllers/ZaloZnsController.js';
-import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
+import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.use(requireAuth);
+// requireAuth + tenantMiddleware đã mount global trong server.js
 
 // Routes cho cấu hình chung Zalo ZNS
 router.get('/config', requirePermission('zns_view'), getConfig);

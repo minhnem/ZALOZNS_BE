@@ -1,10 +1,10 @@
 import express from 'express';
 import { getOrders, createOrder, updateOrder, deleteOrder } from '../controllers/OrderController.js';
-import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
+import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.use(requireAuth);
+// requireAuth + tenantMiddleware đã mount global trong server.js
 
 router.get('/', requirePermission('data_view'), getOrders);
 router.post('/', requirePermission('data_create'), createOrder);

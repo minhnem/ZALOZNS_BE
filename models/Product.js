@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const productSchema = new mongoose.Schema({
   name: { 
@@ -24,10 +25,21 @@ const productSchema = new mongoose.Schema({
   },
   kiotviet_code: {
     type: String,
-    unique: true,
-    sparse: true, // Allow multiple products to not have this code
+    sparse: true,
     trim: true
   }
 }, { timestamps: true });
+
+// Multi-tenant: Mã KiotViet unique trong phạm vi từng shop, CHỈ tạo index khi có kiotviet_code
+productSchema.index(
+  { tenant_id: 1, kiotviet_code: 1 }, 
+  { 
+    unique: true, 
+    partialFilterExpression: { kiotviet_code: { $exists: true, $type: "string" } }
+  }
+);
+
+// Đăng ký Tenant Plugin
+productSchema.plugin(tenantPlugin);
 
 export default mongoose.model('Product', productSchema);

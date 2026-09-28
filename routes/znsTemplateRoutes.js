@@ -7,11 +7,11 @@ import {
   updateTemplate, 
   deleteTemplate 
 } from '../controllers/ZnsTemplateController.js';
-import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
+import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.use(requireAuth);
+// requireAuth + tenantMiddleware đã mount global trong server.js
 
 // Đồng bộ template từ Zalo OA
 router.post('/sync', requirePermission('zns_create'), syncTemplates);

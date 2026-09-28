@@ -1,10 +1,10 @@
 import express from 'express';
 import { getCampaignReports, getCampaignDetailLogs } from '../controllers/reportController.js';
-import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
+import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.use(requireAuth);
+// requireAuth + tenantMiddleware đã mount global trong server.js
 
 router.get('/campaigns', requirePermission('dashboard_view'), getCampaignReports);
 router.get('/campaigns/:id/logs', requirePermission('dashboard_view'), getCampaignDetailLogs);

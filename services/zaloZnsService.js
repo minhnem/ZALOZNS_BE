@@ -5,6 +5,8 @@ import Campaign from '../models/Campaign.js';
 import ZaloOAConfig from '../models/ZaloOAConfig.js';
 import ZnsLog from '../models/ZnsLog.js';
 import Order from '../models/Order.js';
+import Tenant from '../models/Tenant.js';
+import { runWithTenant, runAsSuperAdmin } from '../utils/tenantContext.js';
 
 // Calculate Pregnancy Week
 function getPregnancyWeek(edd) {
@@ -741,10 +743,12 @@ export const updateCampaignCronJob = (campaign) => {
       if (delay > 0) {
         const timer = setTimeout(async () => {
           try {
-            const freshCampaign = await Campaign.findById(idStr);
-            if (freshCampaign && freshCampaign.status === 'active') {
-              await executeMasterSubEvent(freshCampaign, freshCampaign.sub_events[i], i);
-            }
+            await runWithTenant(campaign.tenant_id, async () => {
+              const freshCampaign = await Campaign.findById(idStr);
+              if (freshCampaign && freshCampaign.status === 'active') {
+                await executeMasterSubEvent(freshCampaign, freshCampaign.sub_events[i], i);
+              }
+            });
           } catch (err) {
             console.error(`[Cron] Error executing master sub-event ${i}:`, err);
           } finally {
@@ -773,22 +777,24 @@ export const updateCampaignCronJob = (campaign) => {
   const scheduleTime = campaign.recurring_schedule || '0 9 * * *';
 
   const job = cron.schedule(scheduleTime, async () => {
-    // Re-fetch to ensure it's still active and within time constraints
-    const dbCamp = await Campaign.findById(idStr);
-    if (!dbCamp || dbCamp.status !== 'active' || !dbCamp.is_auto_run) {
-      removeCampaignCronJob(idStr);
-      return;
-    }
-    
-    const now = new Date();
-    if (dbCamp.start_time && new Date(dbCamp.start_time) > now) return;
-    if (dbCamp.end_time && new Date(dbCamp.end_time) < now) {
-      // If expired, we can optionally stop it
-      removeCampaignCronJob(idStr);
-      return;
-    }
+    await runWithTenant(campaign.tenant_id, async () => {
+      // Re-fetch to ensure it's still active and within time constraints
+      const dbCamp = await Campaign.findById(idStr);
+      if (!dbCamp || dbCamp.status !== 'active' || !dbCamp.is_auto_run) {
+        removeCampaignCronJob(idStr);
+        return;
+      }
+      
+      const now = new Date();
+      if (dbCamp.start_time && new Date(dbCamp.start_time) > now) return;
+      if (dbCamp.end_time && new Date(dbCamp.end_time) < now) {
+        // If expired, we can optionally stop it
+        removeCampaignCronJob(idStr);
+        return;
+      }
 
-    await executeCampaign(dbCamp);
+      await executeCampaign(dbCamp);
+    });
   });
   
   activeCronJobs.set(idStr, job);
@@ -797,15 +803,17 @@ export const updateCampaignCronJob = (campaign) => {
 
 export const initCampaignCronJobs = async () => {
   try {
-    // Initialize recurring campaigns
-    const recurringCampaigns = await Campaign.find({ status: 'active', is_auto_run: true, type: { $ne: 'MASTER_CAMPAIGN' } });
-    recurringCampaigns.forEach(updateCampaignCronJob);
+    await runAsSuperAdmin(async () => {
+      // Initialize recurring campaigns
+      const recurringCampaigns = await Campaign.find({ status: 'active', is_auto_run: true, type: { $ne: 'MASTER_CAMPAIGN' } });
+      recurringCampaigns.forEach(updateCampaignCronJob);
 
-    // Initialize Master Campaigns (schedule sub-events)
-    const masterCampaigns = await Campaign.find({ status: 'active', type: 'MASTER_CAMPAIGN' });
-    masterCampaigns.forEach(updateCampaignCronJob);
+      // Initialize Master Campaigns (schedule sub-events)
+      const masterCampaigns = await Campaign.find({ status: 'active', type: 'MASTER_CAMPAIGN' });
+      masterCampaigns.forEach(updateCampaignCronJob);
 
-    console.log(`[Cron] Initialized ${activeCronJobs.size} dynamic campaign jobs (including ${masterCampaigns.length} master campaigns).`);
+      console.log(`[Cron] Initialized ${activeCronJobs.size} dynamic campaign jobs (including ${masterCampaigns.length} master campaigns).`);
+    });
   } catch (error) {
     console.error('Error initializing campaign cron jobs:', error);
   }
@@ -813,8 +821,22 @@ export const initCampaignCronJobs = async () => {
 
 // 4. Schedule the Jobs (System Level)
 export const scheduleZaloZNS = () => {
-  // Job 1: Refresh Token every day at 08:30 AM
-  cron.schedule('30 8 * * *', refreshZaloToken);
+  // Job 1: Refresh Token every day at 08:30 AM for all tenants
+  cron.schedule('30 8 * * *', async () => {
+    console.log('--- Starting System-wide Zalo Token Refresh Job ---');
+    try {
+      await runAsSuperAdmin(async () => {
+        const tenants = await Tenant.find({ status: 'active' });
+        for (const tenant of tenants) {
+          await runWithTenant(tenant._id, async () => {
+            await refreshZaloToken();
+          });
+        }
+      });
+    } catch (e) {
+      console.error('System-wide token refresh error:', e);
+    }
+  });
 
   // Job 2: Initialize all dynamic campaign jobs
   initCampaignCronJobs();

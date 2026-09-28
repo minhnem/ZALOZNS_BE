@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const campaignSchema = new mongoose.Schema({
   name: { 
@@ -98,5 +99,8 @@ const campaignSchema = new mongoose.Schema({
     ref: 'User'
   }
 }, { timestamps: true });
+
+// Đăng ký Tenant Plugin
+campaignSchema.plugin(tenantPlugin);
 
 export default mongoose.model('Campaign', campaignSchema);

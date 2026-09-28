@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const activityLogSchema = new mongoose.Schema({
   user_id: {
@@ -30,5 +31,8 @@ const activityLogSchema = new mongoose.Schema({
 // Indexing for faster queries (by user, by action, by entity)
 activityLogSchema.index({ user_id: 1, createdAt: -1 });
 activityLogSchema.index({ entity_type: 1, entity_id: 1 });
+
+// Đăng ký Tenant Plugin
+activityLogSchema.plugin(tenantPlugin);
 
 export const ActivityLog = mongoose.model('ActivityLog', activityLogSchema);

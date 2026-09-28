@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const znsLogSchema = new mongoose.Schema({
   customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: true },
@@ -17,5 +18,8 @@ const znsLogSchema = new mongoose.Schema({
   milestone_key: { type: String }, // e.g. BABY_MONTH_2
   trigger_type: { type: String, enum: ['CRON_AUTO', 'MANUAL_TRIGGER'], default: 'CRON_AUTO' }
 }, { timestamps: true });
+
+// Đăng ký Tenant Plugin
+znsLogSchema.plugin(tenantPlugin);
 
 export default mongoose.model('ZnsLog', znsLogSchema);

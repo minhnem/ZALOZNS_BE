@@ -4,6 +4,14 @@ import Order from '../models/Order.js';
 import AuditLog from '../models/AuditLog.js';
 import { logActivity } from '../utils/auditLog.js';
 import { executeCampaign, executeMasterSubEvent, updateCampaignCronJob, removeCampaignCronJob } from '../services/zaloZnsService.js';
+import Tenant from '../models/Tenant.js';
+
+const planFeatures = {
+  free: ['PRODUCT_REFILL'],
+  basic: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO'],
+  pro: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO', 'LIFECYCLE', 'MASTER_CAMPAIGN'],
+  enterprise: ['PRODUCT_REFILL', 'PROMOTION', 'BIRTHDAY', 'ONE_OFF_PROMO', 'LIFECYCLE', 'MASTER_CAMPAIGN']
+};
 
 const syncProductCyclesAndOrders = async (milestones) => {
   if (!Array.isArray(milestones)) return;
@@ -83,6 +91,17 @@ export const getCampaignById = async (req, res) => {
 
 export const createCampaign = async (req, res) => {
   try {
+    if (req.user && req.user.tenant_id) {
+      const tenant = await Tenant.findById(req.user.tenant_id);
+      const plan = tenant?.plan || 'free';
+      const type = req.body.type;
+      
+      const allowedFeatures = planFeatures[plan] || planFeatures['free'];
+      if (type && !allowedFeatures.includes(type)) {
+        return res.status(403).json({ message: 'Gói dịch vụ của bạn không hỗ trợ tính năng này. Vui lòng nâng cấp gói để sử dụng.' });
+      }
+    }
+
     if (req.body.type === 'PRODUCT_REFILL' && req.body.milestones) {
       await syncProductCyclesAndOrders(req.body.milestones);
     }

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const orderSchema = new mongoose.Schema({
   customer_id: { 
@@ -66,5 +67,8 @@ orderSchema.post('save', async function (doc) {
     console.error('[Order Hook Error]', error.message);
   }
 });
+
+// Đăng ký Tenant Plugin
+orderSchema.plugin(tenantPlugin);
 
 export default mongoose.model('Order', orderSchema);

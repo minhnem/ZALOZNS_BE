@@ -1,11 +1,11 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const customerSchema = new mongoose.Schema({
   name: { type: String, default: 'Mẹ' },
   phone: { 
     type: String, 
-    required: true, 
-    unique: true 
+    required: true
   },
   baby_name: { type: String },
   baby_dob: { type: Date },
@@ -27,5 +27,11 @@ const customerSchema = new mongoose.Schema({
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   updated_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
+
+// Multi-tenant: SĐT unique trong phạm vi từng shop
+customerSchema.index({ tenant_id: 1, phone: 1 }, { unique: true });
+
+// Đăng ký Tenant Plugin
+customerSchema.plugin(tenantPlugin);
 
 export default mongoose.model('Customer', customerSchema);

@@ -50,10 +50,11 @@ export const getDashboardStats = async (req, res) => {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
-    const uniqueCustomersWithOrders = await Order.distinct('customer_id', {
+    const ordersThisMonth = await Order.find({
       purchase_date: { $gte: startOfMonth }
-    });
-    const newRegistrations = uniqueCustomersWithOrders.length;
+    }).select('customer_id').lean();
+    const uniqueCustomerIds = [...new Set(ordersThisMonth.map(o => o.customer_id?.toString()).filter(Boolean))];
+    const newRegistrations = uniqueCustomerIds.length;
 
     // 3. Total Campaigns (tổng số chiến dịch)
     const totalCampaigns = await Campaign.countDocuments();

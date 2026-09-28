@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const kiotVietConfigSchema = new mongoose.Schema({
   retailer: {
@@ -23,5 +24,8 @@ const kiotVietConfigSchema = new mongoose.Schema({
     type: Date,
   }
 }, { timestamps: true });
+
+// Đăng ký Tenant Plugin
+kiotVietConfigSchema.plugin(tenantPlugin);
 
 export default mongoose.model('KiotVietConfig', kiotVietConfigSchema);

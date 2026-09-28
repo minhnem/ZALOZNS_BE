@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const auditLogSchema = new mongoose.Schema({
   user_id: { 
@@ -22,5 +23,8 @@ const auditLogSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed // Store old/new values or description
   }
 }, { timestamps: true });
+
+// Đăng ký Tenant Plugin
+auditLogSchema.plugin(tenantPlugin);
 
 export default mongoose.model('AuditLog', auditLogSchema);

@@ -1,13 +1,13 @@
 import express from 'express';
 import multer from 'multer';
 import { createCustomer, getCustomers, updateCustomer, deleteCustomer, importCustomersExcel } from '../controllers/CustomerController.js';
-import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
+import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-router.use(requireAuth);
+// requireAuth + tenantMiddleware đã mount global trong server.js
 
 router.post('/import', upload.single('file'), requirePermission('data_create'), importCustomersExcel);
 router.post('/', requirePermission('data_create'), createCustomer);

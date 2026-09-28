@@ -1,10 +1,23 @@
 import ZaloZNS from '../models/ZaloZNS.js';
+import ZaloOAConfig from '../models/ZaloOAConfig.js';
 
 // Get Zalo ZNS Config & Milestones
 export const getConfig = async (req, res) => {
   try {
     const config = await ZaloZNS.findOne();
-    res.status(200).json(config || {});
+    const oaConfig = await ZaloOAConfig.findOne();
+    
+    const responseData = {
+      ...(config ? config.toObject() : {}),
+      oaId: oaConfig?.oa_id || config?.oaId,
+      oaName: oaConfig?.oa_name || config?.oaName,
+      appId: oaConfig?.app_id || config?.appId,
+      secretKey: oaConfig?.secret_key || config?.secretKey,
+      accessToken: oaConfig?.access_token || config?.accessToken,
+      refreshToken: oaConfig?.refresh_token || config?.refreshToken,
+    };
+    
+    res.status(200).json(responseData);
   } catch (error) {
     res.status(500).json({ message: "Lỗi lấy cấu hình ZNS", error: error.message });
   }
@@ -27,9 +40,32 @@ export const updateConfig = async (req, res) => {
       if (refreshToken) config.refreshToken = refreshToken;
       if (znsTemplateId) config.znsTemplateId = znsTemplateId;
     }
-
     await config.save();
-    res.status(200).json({ message: "Cập nhật cấu hình thành công", config });
+
+    // Đồng bộ sang ZaloOAConfig cho service sử dụng
+    let oaConfig = await ZaloOAConfig.findOne();
+    if (!oaConfig) {
+      oaConfig = new ZaloOAConfig({
+        oa_id: oaId,
+        oa_name: oaName,
+        app_id: appId,
+        secret_key: secretKey,
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        is_connected: true
+      });
+    } else {
+      if (oaId) oaConfig.oa_id = oaId;
+      if (oaName) oaConfig.oa_name = oaName;
+      if (appId) oaConfig.app_id = appId;
+      if (secretKey) oaConfig.secret_key = secretKey;
+      if (accessToken) oaConfig.access_token = accessToken;
+      if (refreshToken) oaConfig.refresh_token = refreshToken;
+      oaConfig.is_connected = true;
+    }
+    await oaConfig.save();
+
+    res.status(200).json({ message: "Cập nhật cấu hình thành công", config: oaConfig });
   } catch (error) {
     res.status(500).json({ message: "Lỗi cập nhật cấu hình", error: error.message });
   }

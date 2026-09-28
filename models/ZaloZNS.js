@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { tenantPlugin } from '../utils/tenantPlugin.js';
 
 const zaloZNSSchema = new mongoose.Schema({
   oaId: { type: String, required: true, unique: true },
@@ -18,5 +19,8 @@ const zaloZNSSchema = new mongoose.Schema({
     recommended_items: { type: String, required: true } 
   }]
 }, { timestamps: true });
+
+// Đăng ký Tenant Plugin
+zaloZNSSchema.plugin(tenantPlugin);
 
 export default mongoose.model('ZaloZNS', zaloZNSSchema);

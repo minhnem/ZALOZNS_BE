@@ -1,10 +1,10 @@
 import express from 'express';
 import { getRoles, createRole, updateRole, deleteRole } from '../controllers/RoleController.js';
-import { requireAuth, requirePermission } from '../middlewares/authMiddleware.js';
+import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.use(requireAuth);
+// requireAuth + tenantMiddleware đã mount global trong server.js
 
 router.get('/', requirePermission('system_view'), getRoles);
 router.post('/', requirePermission('system_create'), createRole);
