@@ -423,6 +423,52 @@ export const executeCampaign = async (campaign) => {
         continue;
       }
 
+      // --- GLOBAL DAILY SPAM LIMIT CHECK (KẾ HOẠCH 1) ---
+      const todayStartLimit = new Date();
+      todayStartLimit.setHours(0, 0, 0, 0);
+      const todayEndLimit = new Date(todayStartLimit);
+      todayEndLimit.setHours(23, 59, 59, 999);
+
+      const existingSuccessOrLimit = await ZnsLog.findOne({
+        phoneSent: formattedPhone,
+        $or: [
+          { status: 'success' },
+          { status: 'skipped' },
+          { status: 'failed', errorMessage: { $regex: /limit|exceeded/i } }
+        ],
+        sentAt: { $gte: todayStartLimit, $lte: todayEndLimit }
+      });
+
+      if (existingSuccessOrLimit) {
+        console.log(`[Skip] Customer ${formattedPhone} already reached Zalo limits today. Skipping.`);
+        
+        const alreadySkipped = await ZnsLog.findOne({
+           phoneSent: formattedPhone,
+           status: 'skipped',
+           campaign_id: campaign._id,
+           milestone_key: milestoneKey,
+           sentAt: { $gte: todayStartLimit, $lte: todayEndLimit }
+        });
+
+        if (!alreadySkipped) {
+          const skipLog = new ZnsLog({
+            campaign_id: campaign._id,
+            campaign_type: campaignType,
+            customerId: customer._id,
+            phoneSent: formattedPhone,
+            status: 'skipped',
+            errorMessage: 'Vượt hạn mức Zalo (Đã nhận hoặc bị chặn trong ngày)',
+            sentAt: new Date(),
+            milestone_key: milestoneKey,
+            znsTemplateId: finalTemplateId,
+            trigger_type: 'CRON_AUTO'
+          });
+          await skipLog.save();
+        }
+        
+        continue;
+      }
+
       // Prepare dynamic template data
       const templateData = {};
 

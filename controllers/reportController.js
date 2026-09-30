@@ -35,20 +35,26 @@ export const getCampaignReports = async (req, res) => {
         failedCount: {
           $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] }
         },
-        totalCount: { $sum: 1 }
+        skippedCount: {
+          $sum: { $cond: [{ $eq: ['$status', 'skipped'] }, 1, 0] }
+        },
+        totalCount: { 
+          $sum: { $cond: [{ $ne: ['$status', 'skipped'] }, 1, 0] }
+        }
       }
     });
 
     const logStats = await ZnsLog.aggregate(aggregateQuery);
 
     // Overall Stats & Daily Stats for Charts
-    const overallStats = { success: 0, failed: 0 };
-    const dailyMap = {}; // { 'YYYY-MM-DD': { success: 0, failed: 0 } }
+    const overallStats = { success: 0, failed: 0, skipped: 0 };
+    const dailyMap = {}; // { 'YYYY-MM-DD': { success: 0, failed: 0, skipped: 0 } }
 
     const result = campaigns.map(camp => {
       const stat = logStats.find(s => s._id && s._id.toString() === camp._id.toString()) || {
         successCount: 0,
         failedCount: 0,
+        skippedCount: 0,
         totalCount: 0
       };
       
@@ -59,22 +65,29 @@ export const getCampaignReports = async (req, res) => {
         status: camp.status,
         successCount: stat.successCount,
         failedCount: stat.failedCount,
+        skippedCount: stat.skippedCount,
         totalCount: stat.totalCount
       };
     }).filter(camp => camp.totalCount > 0);
 
     // Get raw logs for the charts
-    const rawLogs = await ZnsLog.find(Object.keys(dateMatch).length > 0 ? { sentAt: dateMatch } : {}).select('sentAt status').lean();
+    const rawLogsMatch = { status: { $ne: 'skipped' } };
+    if (Object.keys(dateMatch).length > 0) {
+      rawLogsMatch.sentAt = dateMatch;
+    }
+    const rawLogs = await ZnsLog.find(rawLogsMatch).select('sentAt status').lean();
     rawLogs.forEach(log => {
       if (log.status === 'success') overallStats.success++;
       else if (log.status === 'failed') overallStats.failed++;
+      else if (log.status === 'skipped') overallStats.skipped++;
 
       if (log.sentAt) {
         const d = new Date(log.sentAt);
         const dateString = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-        if (!dailyMap[dateString]) dailyMap[dateString] = { success: 0, failed: 0, date: dateString };
+        if (!dailyMap[dateString]) dailyMap[dateString] = { success: 0, failed: 0, skipped: 0, date: dateString };
         if (log.status === 'success') dailyMap[dateString].success++;
         else if (log.status === 'failed') dailyMap[dateString].failed++;
+        else if (log.status === 'skipped') dailyMap[dateString].skipped++;
       }
     });
 
@@ -100,7 +113,7 @@ export const getCampaignDetailLogs = async (req, res) => {
     const { id } = req.params;
     const { startDate, endDate } = req.query;
 
-    const query = { campaign_id: id };
+    const query = { campaign_id: id, status: { $ne: 'skipped' } };
 
     if (startDate || endDate) {
       query.sentAt = {};

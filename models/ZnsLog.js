@@ -8,7 +8,7 @@ const znsLogSchema = new mongoose.Schema({
   weekAge: { type: Number },
   znsTemplateId: { type: String },
   sentAt: { type: Date, default: Date.now },
-  status: { type: String, enum: ['success', 'failed'], required: true },
+  status: { type: String, enum: ['success', 'failed', 'skipped'], required: true },
   zaloMessageId: { type: String }, 
   errorMessage: { type: String },
 
