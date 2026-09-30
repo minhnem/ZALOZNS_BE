@@ -4,6 +4,7 @@ import Customer from '../models/Customer.js';
 import Campaign from '../models/Campaign.js';
 import ZaloOAConfig from '../models/ZaloOAConfig.js';
 import ZnsLog from '../models/ZnsLog.js';
+import ZnsTemplate from '../models/ZnsTemplate.js';
 import Order from '../models/Order.js';
 import Tenant from '../models/Tenant.js';
 import { runWithTenant, runAsSuperAdmin } from '../utils/tenantContext.js';
@@ -283,6 +284,18 @@ export const executeCampaign = async (campaign) => {
     // Campaign milestones
     const milestones = campaign.milestones || [];
 
+    // Pre-fetch ZNS Templates to check parameter types (SYSTEM vs CUSTOM)
+    const templateIdsToFetch = new Set();
+    if (campaign.zns_template_id) templateIdsToFetch.add(campaign.zns_template_id);
+    for (const m of milestones) {
+        if (m.zns_template_id) templateIdsToFetch.add(m.zns_template_id);
+    }
+    const fetchedTemplates = await ZnsTemplate.find({ template_id: { $in: Array.from(templateIdsToFetch) } });
+    const templatesMap = {};
+    for (const t of fetchedTemplates) {
+        templatesMap[t.template_id] = t;
+    }
+
     for (const target of targets) {
       const { customer, product_name, refill_date, product_id, milestone_prefix, milestone_match } = target;
       const formattedPhone = formatPhoneNumber(customer.phone);
@@ -481,9 +494,19 @@ export const executeCampaign = async (campaign) => {
       }
 
       // 2. Override with custom campaign variables (from the UI) and Lifecycle milestones
+      const currentTemplateInfo = templatesMap[finalTemplateId];
+      let systemParams = ['customer_name', 'phone']; // Defaults
+      if (currentTemplateInfo && currentTemplateInfo.params) {
+          systemParams = currentTemplateInfo.params
+              .filter(p => p.type === 'SYSTEM')
+              .map(p => p.name.replace(/^[<]+|[>]+$/g, ''));
+      }
+
       for (const [key, value] of Object.entries(dynamicDataObj)) {
         const cleanKey = key.trim().replace(/^[<]+|[>]+$/g, '').trim();
-        templateData[cleanKey] = value;
+        if (!systemParams.includes(cleanKey) || !templateData[cleanKey]) {
+          templateData[cleanKey] = value;
+        }
       }
 
       // 3. Prevent Zalo validation error for missing variables
