@@ -697,10 +697,21 @@ export const executeMasterSubEvent = async (campaign, subEvent, subEventIndex) =
       templateData['customer_name'] = customer.name || 'Quý khách';
       templateData['phone'] = formattedPhone;
 
+      // Extract system params for Master Campaign
+      const currentTemplateInfo = await ZnsTemplate.findOne({ template_id: templateId });
+      let systemParams = ['customer_name', 'phone'];
+      if (currentTemplateInfo && currentTemplateInfo.params) {
+          systemParams = currentTemplateInfo.params
+              .filter(p => p.type === 'SYSTEM')
+              .map(p => p.name.replace(/^[<]+|[>]+$/g, '').trim());
+      }
+
       // Override with custom dynamic data
       for (const [key, value] of Object.entries(dynamicDataObj)) {
         const cleanKey = key.trim().replace(/^[<]+|[>]+$/g, '').trim();
-        templateData[cleanKey] = value;
+        if (!systemParams.includes(cleanKey) || !templateData[cleanKey]) {
+           templateData[cleanKey] = value;
+        }
       }
 
       if (!templateData.expire) {
