@@ -901,8 +901,8 @@ export const initCampaignCronJobs = async () => {
 
 // 4. Schedule the Jobs (System Level)
 export const scheduleZaloZNS = () => {
-  // Job 1: Refresh Token every day at 08:30 AM for all tenants
-  cron.schedule('30 8 * * *', async () => {
+  // Job 1: Refresh Token every day at 12:00 AM (00:00) for all tenants
+  cron.schedule('0 0 * * *', async () => {
     console.log('--- Starting System-wide Zalo Token Refresh Job ---');
     try {
       await runAsSuperAdmin(async () => {

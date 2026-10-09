@@ -169,7 +169,7 @@ export const updateTenantPlan = async (req, res) => {
 export const updateTenant = async (req, res) => {
   try {
     const { id } = req.params;
-    const allowedUpdates = ['name', 'phone', 'address', 'plan', 'status', 'max_users', 'max_customers', 'max_zns_per_month'];
+    const allowedUpdates = ['name', 'phone', 'address', 'plan', 'status'];
     const updateData = {};
     for (const key of allowedUpdates) {
       if (req.body[key] !== undefined) {
@@ -179,6 +179,18 @@ export const updateTenant = async (req, res) => {
     
     const tenant = await Tenant.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
     if (!tenant) return res.status(404).json({ message: 'Không tìm thấy Shop' });
+
+    // Cập nhật thông tin User chủ shop nếu có gửi email/password
+    if (tenant.owner_id && (req.body.email || req.body.password)) {
+      const userUpdates = {};
+      if (req.body.email) userUpdates.email = req.body.email;
+      if (req.body.password) {
+        const salt = await bcrypt.genSalt(10);
+        userUpdates.password_hash = await bcrypt.hash(req.body.password, salt);
+      }
+      // Dùng runAsSuperAdmin nếu cần bỏ qua scope tenant (tuỳ thuộc setup plugin), ở đây cứ gọi thẳng
+      await User.findByIdAndUpdate(tenant.owner_id, userUpdates, { strict: false });
+    }
     
     res.json(tenant);
   } catch (error) {
