@@ -97,7 +97,12 @@ const connectDB = async () => {
 
 connectDB()
   .then(() => {
-    scheduleZaloZNS();
+    if (process.env.ENABLE_CRON !== 'false') {
+      scheduleZaloZNS();
+      console.log('Cronjob ZNS: ENABLED');
+    } else {
+      console.log('Cronjob ZNS: DISABLED (Dev mode safe)');
+    }
     app.listen(PORT, () => {
       console.log(`server is starting at http://localhost:${PORT}`);
       console.log(`Multi-tenant mode: ENABLED`);
