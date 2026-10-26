@@ -15,11 +15,18 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_please_change_
 export const requireAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    let token = null;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query?.token) {
+      token = req.query.token;
+    }
+
+    if (!token) {
       return res.status(401).json({ message: 'Không tìm thấy Token. Vui lòng đăng nhập.' });
     }
 
-    const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
 
     // Dùng SuperAdmin context để tìm user (chưa có tenant context ở bước này)
@@ -51,6 +58,11 @@ export const requireAuth = async (req, res, next) => {
  */
 export const requirePermission = (permission) => {
   return (req, res, next) => {
+    // Super Admin có toàn quyền truy cập
+    if (req.user?.is_super_admin) {
+      return next();
+    }
+
     if (!req.user || !req.user.role_id) {
       return res.status(403).json({ message: 'Bạn không có quyền thực hiện hành động này.' });
     }

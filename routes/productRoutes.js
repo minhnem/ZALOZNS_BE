@@ -1,5 +1,5 @@
 import express from 'express';
-import { getProducts, getProductById, createProduct, updateProduct, deleteProduct } from '../controllers/ProductController.js';
+import { getProducts, getProductById, createProduct, updateProduct, deleteProduct, bulkDeleteProducts } from '../controllers/ProductController.js';
 import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
@@ -7,6 +7,7 @@ const router = express.Router();
 // requireAuth + tenantMiddleware đã mount global trong server.js
 
 router.get('/', requirePermission('data_view'), getProducts);
+router.post('/bulk-delete', requirePermission('data_delete'), bulkDeleteProducts);
 router.get('/:id', requirePermission('data_view'), getProductById);
 router.post('/', requirePermission('data_create'), createProduct);
 router.put('/:id', requirePermission('data_edit'), updateProduct);

@@ -178,6 +178,49 @@ export const deleteCampaign = async (req, res) => {
   }
 };
 
+export const bulkDeleteCampaigns = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: 'Danh sách ID không hợp lệ' });
+    }
+
+    const campaigns = await Campaign.find({ _id: { $in: ids } });
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'Không tìm thấy chiến dịch nào để xóa' });
+    }
+
+    await Campaign.deleteMany({ _id: { $in: ids } });
+
+    for (const c of campaigns) {
+      try {
+        removeCampaignCronJob(c._id);
+      } catch (e) {
+        console.error(`Error removing cron job for ${c._id}:`, e);
+      }
+    }
+
+    if (req.user) {
+      await logActivity(
+        req.user._id,
+        'DELETE',
+        'Campaign',
+        null,
+        `Xóa hàng loạt ${campaigns.length} chiến dịch: ${campaigns.map(c => c.name).join(', ')}`
+      );
+    }
+
+    res.status(200).json({
+      message: `Đã xóa thành công ${campaigns.length} chiến dịch`,
+      deletedCount: campaigns.length
+    });
+  } catch (error) {
+    console.error('Error in bulkDeleteCampaigns:', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+};
+
+
 export const triggerManualCampaign = async (req, res) => {
   try {
     const { campaignId, audience, subEventIndex } = req.body;

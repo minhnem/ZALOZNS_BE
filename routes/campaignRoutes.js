@@ -1,5 +1,5 @@
 import express from 'express';
-import { getCampaigns, getCampaignById, createCampaign, updateCampaign, deleteCampaign, triggerManualCampaign } from '../controllers/CampaignController.js';
+import { getCampaigns, getCampaignById, createCampaign, updateCampaign, deleteCampaign, bulkDeleteCampaigns, triggerManualCampaign } from '../controllers/CampaignController.js';
 import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
@@ -7,6 +7,7 @@ const router = express.Router();
 // requireAuth + tenantMiddleware đã mount global trong server.js
 
 router.get('/', requirePermission('campaign_view'), getCampaigns);
+router.post('/bulk-delete', requirePermission('campaign_delete'), bulkDeleteCampaigns);
 router.get('/:id', requirePermission('campaign_view'), getCampaignById);
 router.post('/', requirePermission('campaign_create'), createCampaign);
 router.put('/:id', requirePermission('campaign_edit'), updateCampaign);

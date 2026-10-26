@@ -13,11 +13,17 @@ import authRoutes from "./routes/authRoutes.js";
 import customerRoutes from "./routes/customerRoutes.js";
 import zaloZnsRoutes from "./routes/zaloZnsRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
+import productBatchRoutes from "./routes/productBatchRoutes.js";
+import categoryRoutes from "./routes/categoryRoutes.js";
+import supplierRoutes from "./routes/supplierRoutes.js";
+import purchaseOrderRoutes from "./routes/purchaseOrderRoutes.js";
+import stockMovementRoutes from "./routes/stockMovementRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import campaignRoutes from "./routes/campaignRoutes.js";
 import znsTemplateRoutes from "./routes/znsTemplateRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import roleRoutes from "./routes/roleRoutes.js";
+import posRoutes from "./routes/posRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import activityLogRoutes from "./routes/activityLogRoutes.js";
 import kiotvietRoutes from "./routes/kiotvietRoutes.js";
@@ -25,6 +31,7 @@ import reportRoutes from "./routes/reportRoutes.js";
 
 // Services
 import { scheduleZaloZNS } from "./services/zaloZnsService.js";
+import { scheduleExpiryCheck } from "./services/batchExpiryService.js";
 
 dotenv.config();
 
@@ -66,7 +73,13 @@ app.use(tenantMiddleware);
 app.use("/api/customers", customerRoutes);
 app.use("/api/zns", zaloZnsRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/product-batches", productBatchRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/suppliers", supplierRoutes);
+app.use("/api/purchase-orders", purchaseOrderRoutes);
+app.use("/api/stock-movements", stockMovementRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/pos", posRoutes);
 app.use("/api/campaigns", campaignRoutes);
 app.use("/api/zns-templates", znsTemplateRoutes);
 app.use("/api/dashboard", dashboardRoutes);
@@ -99,9 +112,10 @@ connectDB()
   .then(() => {
     if (process.env.ENABLE_CRON !== 'false') {
       scheduleZaloZNS();
-      console.log('Cronjob ZNS: ENABLED');
+      scheduleExpiryCheck();
+      console.log('Cronjob ZNS & ExpiryCheck: ENABLED');
     } else {
-      console.log('Cronjob ZNS: DISABLED (Dev mode safe)');
+      console.log('Cronjobs (ZNS & Expiry): DISABLED (Dev mode safe)');
     }
     app.listen(PORT, () => {
       console.log(`server is starting at http://localhost:${PORT}`);

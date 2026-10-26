@@ -2,6 +2,8 @@ import Customer from '../models/Customer.js';
 import Order from '../models/Order.js';
 import Campaign from '../models/Campaign.js';
 import ZnsLog from '../models/ZnsLog.js';
+import ProductBatch from '../models/ProductBatch.js';
+import ExpiryAlert from '../models/ExpiryAlert.js';
 
 // Helper: Calculate baby age in months
 function getBabyAgeInMonths(dob) {
@@ -221,13 +223,67 @@ export const getDashboardStats = async (req, res) => {
       });
     }
 
-    // 10.4 Generic positive alert if all clear
+    // 10.4 Expiry Alerts (Lô hàng cận date & Hết hạn)
+    const activeExpiryAlerts = await ExpiryAlert.find({ status: 'active' })
+      .populate('product_id', 'name unit sell_price')
+      .sort({ days_left: 1 })
+      .lean();
+
+    const expiredAlerts = activeExpiryAlerts.filter(a => a.alert_level === 'expired' || a.days_left <= 0);
+    const nearExpiry30Alerts = activeExpiryAlerts.filter(a => a.alert_level === 'near_expiry_30' || (a.days_left > 0 && a.days_left <= 30));
+    const nearExpiry90Alerts = activeExpiryAlerts.filter(a => a.days_left > 30 && a.days_left <= 90);
+
+    const expiredRiskValue = expiredAlerts.reduce((sum, a) => sum + (a.risk_value || 0), 0);
+    const nearExpiry30RiskValue = nearExpiry30Alerts.reduce((sum, a) => sum + (a.risk_value || 0), 0);
+    const totalRiskValue = activeExpiryAlerts.reduce((sum, a) => sum + (a.risk_value || 0), 0);
+
+    if (expiredAlerts.length > 0) {
+      alerts.push({
+        type: 'error',
+        message: `Phát hiện ${expiredAlerts.length} lô hàng ĐÃ QUÁ HẠN (vốn tồn đọng ~ ${expiredRiskValue.toLocaleString('vi-VN')} đ). Vui lòng kiểm tra và xuất hủy ngay!`,
+        actionUrl: '/products?tab=batches&filterStatus=expired'
+      });
+    }
+
+    if (nearExpiry30Alerts.length > 0) {
+      alerts.push({
+        type: 'warning',
+        message: `Có ${nearExpiry30Alerts.length} lô hàng sắp hết hạn trong 30 ngày tới (tổng vốn rủi ro ~ ${nearExpiry30RiskValue.toLocaleString('vi-VN')} đ). Hãy kích hoạt xả hàng qua ZNS ngay!`,
+        actionUrl: '/products?tab=batches&filterStatus=near_expiry'
+      });
+    }
+
+    // 10.5 Generic positive alert if all clear
     if (alerts.length === 0) {
       alerts.push({
         type: 'success',
         message: 'Hệ thống đang hoạt động trơn tru. Không có cảnh báo hay rủi ro nào hôm nay.'
       });
     }
+
+    const expirySummary = {
+      totalAlerts: activeExpiryAlerts.length,
+      expiredCount: expiredAlerts.length,
+      expiredRiskValue,
+      nearExpiry30Count: nearExpiry30Alerts.length,
+      nearExpiry30RiskValue,
+      nearExpiry90Count: nearExpiry90Alerts.length,
+      totalRiskValue,
+      topRiskBatches: activeExpiryAlerts.slice(0, 5).map(a => ({
+        _id: a._id,
+        product_id: a.product_id?._id,
+        product_name: a.product_name,
+        batch_id: a.batch_id,
+        batch_number: a.batch_number,
+        expiry_date: a.expiry_date,
+        days_left: a.days_left,
+        quantity_in_stock: a.quantity_in_stock,
+        cost_price: a.cost_price,
+        risk_value: a.risk_value,
+        alert_level: a.alert_level,
+        action_taken: a.action_taken
+      }))
+    };
 
     res.status(200).json({
       keyMetrics: {
@@ -241,6 +297,7 @@ export const getDashboardStats = async (req, res) => {
       recentAutomations,
       recentLogs,
       customerList,
+      expirySummary,
       alerts
     });
   } catch (error) {
