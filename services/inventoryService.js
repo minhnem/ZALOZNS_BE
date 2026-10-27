@@ -226,3 +226,106 @@ export async function discardStock({
 
   return batch;
 }
+
+/**
+ * Tạo phiếu kiểm kê kho hàng loạt (nhiều sản phẩm / lô hàng cùng lúc)
+ * @param {Object} params
+ * @param {String} params.stocktaking_code - Mã phiếu kiểm kê (tự sinh nếu không truyền)
+ * @param {String} params.reason - Lý do kiểm kê
+ * @param {Array} params.items - Danh sách kiểm kê: [{ batch_id, actual_quantity, notes }]
+ * @param {ObjectId} params.userId - Người thực hiện
+ */
+export async function bulkAdjustStock({ stocktaking_code, reason, items, userId }) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('Danh sách hàng kiểm kê không được rỗng');
+  }
+
+  // Tự sinh mã phiếu kiểm kê nếu chưa có: KK-YYMMDD-XXXX
+  let code = stocktaking_code;
+  if (!code) {
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const datePrefix = `KK-${yy}${mm}${dd}`;
+
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const countToday = await StockMovement.countDocuments({
+      reference_code: { $regex: `^${datePrefix}` },
+      createdAt: { $gte: startOfDay, $lte: endOfDay }
+    });
+    const seq = String(countToday + 1).padStart(4, '0');
+    code = `${datePrefix}-${seq}`;
+  }
+
+  let updatedCount = 0;
+  let unchangedCount = 0;
+  let totalDiffQuantity = 0;
+  let totalDiffValue = 0;
+
+  for (const item of items) {
+    const { batch_id, actual_quantity, notes } = item;
+    if (!batch_id || actual_quantity === undefined || actual_quantity === null || actual_quantity < 0) {
+      continue;
+    }
+
+    const batch = await ProductBatch.findById(batch_id);
+    if (!batch) continue;
+
+    const product = await Product.findById(batch.product_id);
+    if (!product) continue;
+
+    const oldStock = batch.quantity_in_stock || 0;
+    const actual = Number(actual_quantity);
+    const diff = actual - oldStock; // Dương: Thừa kho (+), Âm: Thiếu kho (-)
+
+    if (diff === 0) {
+      unchangedCount++;
+      continue;
+    }
+
+    // Cập nhật tồn kho lô
+    batch.quantity_in_stock = actual;
+    const nearExpiryDays = product.near_expiry_days || 90;
+    batch.status = calculateBatchStatus(batch, nearExpiryDays);
+    batch.updated_by = userId;
+    await batch.save(); // Hook ProductBatch tự động cập nhật Product.total_stock
+
+    const costPrice = batch.cost_price || product.cost_price || 0;
+    const value = Math.abs(diff) * costPrice;
+
+    // Ghi nhận lịch sử Sổ kho
+    await StockMovement.create({
+      product_id: product._id,
+      batch_id: batch._id,
+      batch_number: batch.batch_number,
+      type: 'ADJUSTMENT',
+      quantity: diff,
+      previous_stock: oldStock,
+      current_stock: actual,
+      unit_price: costPrice,
+      total_value: value,
+      reference_type: 'Stocktaking',
+      reference_id: batch._id,
+      reference_code: code,
+      notes: notes || reason || `Kiểm kê kho theo phiếu ${code}`,
+      created_by: userId
+    });
+
+    updatedCount++;
+    totalDiffQuantity += diff;
+    totalDiffValue += value;
+  }
+
+  return {
+    stocktaking_code: code,
+    updated_count: updatedCount,
+    unchanged_count: unchangedCount,
+    total_items: items.length,
+    total_diff_quantity: totalDiffQuantity,
+    total_diff_value: totalDiffValue
+  };
+}
+

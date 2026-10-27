@@ -1,4 +1,5 @@
 import express from 'express';
+import multer from 'multer';
 import {
   getPurchaseOrders,
   getPurchaseOrderById,
@@ -7,12 +8,19 @@ import {
   receivePurchaseOrder,
   cancelPurchaseOrder,
   deletePurchaseOrder,
-  bulkDeletePurchaseOrders
+  bulkDeletePurchaseOrders,
+  downloadPurchaseOrderTemplate,
+  parsePurchaseOrderExcel,
+  importPurchaseOrderExcel
 } from '../controllers/PurchaseOrderController.js';
 import { requirePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage() });
 
+router.get('/template', requirePermission('data_view'), downloadPurchaseOrderTemplate);
+router.post('/parse-items', upload.single('file'), requirePermission('data_create'), parsePurchaseOrderExcel);
+router.post('/import', upload.single('file'), requirePermission('data_create'), importPurchaseOrderExcel);
 router.get('/', requirePermission('data_view'), getPurchaseOrders);
 router.post('/bulk-delete', requirePermission('data_delete'), bulkDeletePurchaseOrders);
 router.get('/:id', requirePermission('data_view'), getPurchaseOrderById);

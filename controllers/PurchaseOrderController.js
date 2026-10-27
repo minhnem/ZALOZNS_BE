@@ -1,9 +1,11 @@
+import * as XLSX from 'xlsx';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import Supplier from '../models/Supplier.js';
 import Product from '../models/Product.js';
 import ProductBatch from '../models/ProductBatch.js';
 import { processReceivePurchaseOrder } from '../services/inventoryService.js';
 import { calculateBatchStatus } from '../services/batchExpiryService.js';
+import { cleanKey, getCellValue, parseExcelDate } from '../utils/excelHelper.js';
 
 /**
  * Controller: PurchaseOrder (Quản lý Phiếu Nhập Kho)
@@ -434,3 +436,322 @@ export const bulkDeletePurchaseOrders = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// ═══════════════════════════════════════════════════
+// TẢI FILE EXCEL MẪU NHẬP HÀNG / PHIẾU NHẬP KHO
+// ═══════════════════════════════════════════════════
+export const downloadPurchaseOrderTemplate = async (req, res) => {
+  try {
+    const wb = XLSX.utils.book_new();
+
+    const sampleRows = [
+      {
+        'Mã SKU / Mã vạch': 'SP-MEIJI-0',
+        'Tên sản phẩm (*)': 'Sữa Meiji Số 0 800g (0-12 tháng)',
+        'Mã lô hàng (*)': 'LOT-MEIJI-2610-01',
+        'Ngày sản xuất (DD/MM/YYYY)': '10/01/2026',
+        'Hạn sử dụng (DD/MM/YYYY) (*)': '10/01/2028',
+        'Số lượng nhập (*)': 50,
+        'Giá nhập (VNĐ) (*)': 450000,
+        'Đơn vị tính': 'Lon'
+      },
+      {
+        'Mã SKU / Mã vạch': 'SP-MERRIES-M58',
+        'Tên sản phẩm (*)': 'Bỉm dán Merries Size M 58 miếng',
+        'Mã lô hàng (*)': 'LOT-MER-2610-02',
+        'Ngày sản xuất (DD/MM/YYYY)': '01/02/2026',
+        'Hạn sử dụng (DD/MM/YYYY) (*)': '01/02/2029',
+        'Số lượng nhập (*)': 30,
+        'Giá nhập (VNĐ) (*)': 310000,
+        'Đơn vị tính': 'Bịch'
+      },
+      {
+        'Mã SKU / Mã vạch': 'SP-LINEABON-D3K2',
+        'Tên sản phẩm (*)': 'Vitamin D3 K2 LineaBon Drops 10ml',
+        'Mã lô hàng (*)': 'LOT-D3K2-2610-03',
+        'Ngày sản xuất (DD/MM/YYYY)': '15/03/2026',
+        'Hạn sử dụng (DD/MM/YYYY) (*)': '15/03/2028',
+        'Số lượng nhập (*)': 40,
+        'Giá nhập (VNĐ) (*)': 210000,
+        'Đơn vị tính': 'Hộp'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(sampleRows);
+
+    ws['!cols'] = [
+      { wch: 20 },
+      { wch: 35 },
+      { wch: 22 },
+      { wch: 25 },
+      { wch: 25 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 14 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Mau_Nhap_Kho');
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="Mau_Nhap_Kho.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return res.send(buffer);
+  } catch (error) {
+    console.error('Error downloading purchase order template:', error);
+    res.status(500).json({ message: 'Lỗi khi tải file mẫu nhập kho', error: error.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════
+// ĐỌC DANH SÁCH HÀNG TỪ FILE EXCEL ĐỂ ĐIỀN VÀO PHIẾU NHẬP
+// ═══════════════════════════════════════════════════
+export const parsePurchaseOrderExcel = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Vui lòng chọn file Excel để tải lên' });
+    }
+
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = wb.SheetNames[0];
+    if (!sheetName) {
+      return res.status(400).json({ message: 'File Excel không có trang tính nào' });
+    }
+
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName]);
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({ message: 'File Excel không có dòng dữ liệu nào' });
+    }
+
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+    const items = [];
+    const errors = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowIdx = i + 2;
+
+      const name = String(getCellValue(row, 'Tên sản phẩm (*)', 'Tên sản phẩm', 'Ten san pham', 'product_name', 'name') || '').trim();
+      const codeOrSku = String(getCellValue(row, 'Mã SKU / Mã vạch', 'Mã SKU', 'Mã vạch', 'SKU', 'sku', 'barcode') || '').trim();
+
+      if (!name && !codeOrSku) {
+        continue;
+      }
+
+      let product = null;
+      if (codeOrSku) {
+        product = await Product.findOne({
+          $or: [
+            { sku: codeOrSku },
+            { barcode: codeOrSku }
+          ]
+        });
+      }
+      if (!product && name) {
+        product = await Product.findOne({ name });
+      }
+
+      // Nếu sản phẩm chưa có trong danh mục, tạo nhanh sản phẩm
+      if (!product) {
+        if (!name) {
+          errors.push(`Dòng ${rowIdx}: Sản phẩm mã "${codeOrSku}" chưa có trong danh mục và thiếu Tên sản phẩm`);
+          continue;
+        }
+        const unit = String(getCellValue(row, 'Đơn vị tính', 'ĐVT', 'unit') || 'Cái').trim();
+        const costPrice = Math.max(0, Number(getCellValue(row, 'Giá nhập (VNĐ) (*)', 'Giá nhập', 'cost_price') || 0));
+
+        product = await Product.create({
+          name,
+          sku: codeOrSku || undefined,
+          unit,
+          cost_price: costPrice,
+          sell_price: Math.round(costPrice * 1.2),
+          total_stock: 0,
+          usage_cycle_days: 30,
+          near_expiry_days: 90,
+          status: 'active'
+        });
+      }
+
+      let batchNumber = String(getCellValue(row, 'Mã lô hàng (*)', 'Mã lô', 'Số lô', 'batch_number') || '').trim();
+      if (!batchNumber) {
+        batchNumber = `LOT-${todayStr}-${Math.floor(100 + Math.random() * 900)}`;
+      }
+
+      const mfgDate = parseExcelDate(getCellValue(row, 'Ngày sản xuất (DD/MM/YYYY)', 'Ngày sản xuất', 'NSX', 'manufacturing_date'));
+      let expDate = parseExcelDate(getCellValue(row, 'Hạn sử dụng (DD/MM/YYYY) (*)', 'Hạn sử dụng', 'HSD', 'expiry_date'));
+      if (!expDate) {
+        expDate = new Date(today.getFullYear() + 2, today.getMonth(), today.getDate());
+      }
+
+      const qty = Math.max(1, Number(getCellValue(row, 'Số lượng nhập (*)', 'Số lượng', 'quantity') || 1));
+      const cost = Math.max(0, Number(getCellValue(row, 'Giá nhập (VNĐ) (*)', 'Giá nhập', 'cost_price') || product.cost_price || 0));
+
+      items.push({
+        product_id: product._id,
+        product_name: product.name,
+        sku: product.sku || '',
+        unit: product.unit || 'Cái',
+        batch_number: batchNumber,
+        manufacturing_date: mfgDate,
+        expiry_date: expDate,
+        quantity: qty,
+        cost_price: cost,
+        total_price: qty * cost
+      });
+    }
+
+    if (items.length === 0) {
+      return res.status(400).json({ message: 'Không tìm thấy dữ liệu hợp lệ trong file Excel', errors });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Đã đọc thành công ${items.length} mặt hàng từ file Excel!`,
+      items,
+      errors
+    });
+  } catch (error) {
+    console.error('Error parsing purchase order excel:', error);
+    res.status(500).json({ message: 'Lỗi khi đọc file Excel nhập kho', error: error.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════
+// TẠO TRỰC TIẾP PHIẾU NHẬP KHO TỪ FILE EXCEL
+// ═══════════════════════════════════════════════════
+export const importPurchaseOrderExcel = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Vui lòng chọn file Excel để tải lên' });
+    }
+
+    const { supplier_id, notes, auto_receive = 'true' } = req.body;
+    let supplier = null;
+
+    if (supplier_id && supplier_id !== 'auto') {
+      supplier = await Supplier.findById(supplier_id);
+    }
+    if (!supplier) {
+      supplier = await Supplier.findOne({ status: 'active' });
+    }
+    if (!supplier) {
+      supplier = await Supplier.create({
+        name: 'Nhà cung cấp tổng hợp',
+        phone: '0900000000',
+        status: 'active'
+      });
+    }
+
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = wb.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName]);
+
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({ message: 'File Excel không có dòng dữ liệu nào' });
+    }
+
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+    const items = [];
+    let calculatedTotal = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const name = String(getCellValue(row, 'Tên sản phẩm (*)', 'Tên sản phẩm', 'Ten san pham', 'product_name', 'name') || '').trim();
+      const codeOrSku = String(getCellValue(row, 'Mã SKU / Mã vạch', 'Mã SKU', 'Mã vạch', 'SKU', 'sku', 'barcode') || '').trim();
+
+      if (!name && !codeOrSku) continue;
+
+      let product = null;
+      if (codeOrSku) {
+        product = await Product.findOne({ $or: [{ sku: codeOrSku }, { barcode: codeOrSku }] });
+      }
+      if (!product && name) {
+        product = await Product.findOne({ name });
+      }
+
+      if (!product) {
+        const unit = String(getCellValue(row, 'Đơn vị tính', 'ĐVT', 'unit') || 'Cái').trim();
+        const costPrice = Math.max(0, Number(getCellValue(row, 'Giá nhập (VNĐ) (*)', 'Giá nhập', 'cost_price') || 0));
+        product = await Product.create({
+          name: name || `Sản phẩm ${codeOrSku}`,
+          sku: codeOrSku || undefined,
+          unit,
+          cost_price: costPrice,
+          sell_price: Math.round(costPrice * 1.2),
+          total_stock: 0,
+          status: 'active'
+        });
+      }
+
+      let batchNumber = String(getCellValue(row, 'Mã lô hàng (*)', 'Mã lô', 'Số lô', 'batch_number') || '').trim();
+      if (!batchNumber) {
+        batchNumber = `LOT-${todayStr}-${Math.floor(100 + Math.random() * 900)}`;
+      }
+
+      const mfgDate = parseExcelDate(getCellValue(row, 'Ngày sản xuất (DD/MM/YYYY)', 'Ngày sản xuất', 'NSX', 'manufacturing_date'));
+      let expDate = parseExcelDate(getCellValue(row, 'Hạn sử dụng (DD/MM/YYYY) (*)', 'Hạn sử dụng', 'HSD', 'expiry_date'));
+      if (!expDate) {
+        expDate = new Date(today.getFullYear() + 2, today.getMonth(), today.getDate());
+      }
+
+      const qty = Math.max(1, Number(getCellValue(row, 'Số lượng nhập (*)', 'Số lượng', 'quantity') || 1));
+      const cost = Math.max(0, Number(getCellValue(row, 'Giá nhập (VNĐ) (*)', 'Giá nhập', 'cost_price') || product.cost_price || 0));
+      const itemTotal = qty * cost;
+      calculatedTotal += itemTotal;
+
+      items.push({
+        product_id: product._id,
+        product_name: product.name,
+        sku: product.sku || '',
+        unit: product.unit || 'Cái',
+        batch_number: batchNumber,
+        manufacturing_date: mfgDate,
+        expiry_date: expDate,
+        quantity: qty,
+        cost_price: cost,
+        total_price: itemTotal
+      });
+    }
+
+    if (items.length === 0) {
+      return res.status(400).json({ message: 'Không có dữ liệu mặt hàng hợp lệ trong file' });
+    }
+
+    const count = await PurchaseOrder.countDocuments();
+    const poCode = `PO-${todayStr}-${String(count + 1).padStart(3, '0')}`;
+
+    const po = new PurchaseOrder({
+      code: poCode,
+      supplier_id: supplier._id,
+      supplier_name: supplier.name,
+      status: 'draft',
+      order_date: new Date(),
+      items,
+      total_amount: calculatedTotal,
+      discount: 0,
+      tax: 0,
+      final_amount: calculatedTotal,
+      payment_status: 'unpaid',
+      notes: notes || 'Nhập tự động từ file Excel',
+      created_by: req.user?._id
+    });
+
+    await po.save();
+
+    if (auto_receive === 'true' || auto_receive === true) {
+      await processReceivePurchaseOrder(po._id, req.user?._id);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Đã tạo thành công phiếu nhập kho ${poCode} gồm ${items.length} mặt hàng!`,
+      data: po
+    });
+  } catch (error) {
+    console.error('Error importing purchase order excel:', error);
+    res.status(500).json({ message: 'Lỗi khi nhập file Excel phiếu nhập kho', error: error.message });
+  }
+};
+
